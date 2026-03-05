@@ -59,7 +59,7 @@ def upload_to_gdrive(local_file_path, file_name):
         log(f"Google Drive Upload Error: {e}")
         return False
 
-def record_radiko(station_id, start_times, yt_dlp_args_ovr=None):
+def record_radiko(station_id, start_times, yt_dlp_args_ovr=None, description=None):
     """
     Downloads Radiko segments based solely on start_times.
     yt-dlp automatically handles downloading until the program's natural end.
@@ -102,7 +102,12 @@ def record_radiko(station_id, start_times, yt_dlp_args_ovr=None):
     # 2. Determine final clean file name
     first_start = start_times[0]
     ext = downloaded_files[0].split('.')[-1]
-    final_file_name = f"{first_start}-{station_id}.{ext}"
+    
+    if description:
+        final_file_name = f"{first_start}-{station_id}-{description}.{ext}"
+    else:
+        final_file_name = f"{first_start}-{station_id}.{ext}"
+        
     final_file_path = os.path.join(DOWNLOAD_DIR, final_file_name)
 
     # 3. Concatenate (or just rename if only 1 segment)
@@ -152,6 +157,7 @@ def process_message(msg_body):
     station_id = data.get('station_id')
     start_times = data.get('start_times', [])
     yt_dlp_args_ovr = data.get('yt_dlp_args', [])
+    description = data.get('description')
     
     # Fallback for older single-segment messages
     if not start_times and data.get('start_time'):
@@ -161,7 +167,7 @@ def process_message(msg_body):
         log("Missing station_id or start_times in message")
         return False
 
-    return record_radiko(station_id, start_times, yt_dlp_args_ovr)
+    return record_radiko(station_id, start_times, yt_dlp_args_ovr, description)
 
 def main():
     if not SQS_QUEUE_URL:

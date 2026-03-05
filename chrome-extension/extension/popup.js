@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const publishAllBtn = document.getElementById('publishAllBtn');
   const addManualBtn = document.getElementById('addManualBtn');
   const settingsBtn = document.getElementById('settingsBtn');
+  const globalDescriptionEl = document.getElementById('globalDescription');
 
   let urls = [];
 
@@ -27,10 +28,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     publishAllBtn.disabled = true;
     publishAllBtn.textContent = 'Publishing...';
 
-    // Publish all items at once
-    const success = await publishPayload({ urls: urls });
+    // Publish all items at once with the global description
+    const desc = globalDescriptionEl.value.trim();
+    const payload = { urls: urls };
+    if (desc) {
+      payload.description = desc;
+    }
+
+    const success = await publishPayload(payload);
     if (success) {
       urls = [];
+      globalDescriptionEl.value = '';
     }
 
     await saveUrls();
@@ -41,8 +49,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function loadUrls() {
     return new Promise((resolve) => {
-      chrome.storage.local.get(['urlStack'], (result) => {
+      chrome.storage.local.get(['urlStack', 'globalDesc'], (result) => {
         urls = result.urlStack || [];
+        if (result.globalDesc) {
+          globalDescriptionEl.value = result.globalDesc;
+        }
         resolve();
       });
     });
@@ -50,11 +61,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function saveUrls() {
     return new Promise((resolve) => {
-      chrome.storage.local.set({ urlStack: urls }, () => {
+      chrome.storage.local.set({
+        urlStack: urls,
+        globalDesc: globalDescriptionEl.value
+      }, () => {
         resolve();
       });
     });
   }
+
+  globalDescriptionEl.addEventListener('change', () => {
+    saveUrls();
+  });
 
   async function addCurrentTabUrl() {
     return new Promise((resolve) => {
@@ -131,7 +149,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         publishBtn.onclick = async () => {
           itemEl.classList.add('publishing');
           publishBtn.textContent = '...';
-          const success = await publishPayload({ urls: [urls[index]] });
+
+          const desc = globalDescriptionEl.value.trim();
+          const payload = { urls: [urls[index]] };
+          if (desc) {
+            payload.description = desc;
+          }
+
+          const success = await publishPayload(payload);
           if (success) {
             removeUrl(index);
           } else {

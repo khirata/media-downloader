@@ -29,7 +29,7 @@ exports.handler = async (event) => {
             }
         }
 
-        const { url, urls } = JSON.parse(event.body || '{}');
+        const { url, urls, description } = JSON.parse(event.body || '{}');
 
         let urlList = [];
         if (urls && Array.isArray(urls)) {
@@ -63,7 +63,7 @@ exports.handler = async (event) => {
 
         // Process Radiko URLs
         if (radikoUrls.length > 0) {
-            const results = await handleRadikoUrls(radikoUrls, topicArn, snsClient);
+            const results = await handleRadikoUrls(radikoUrls, description, topicArn, snsClient);
             publishResults.push(...results);
         }
 
@@ -107,7 +107,7 @@ function getCorsHeaders() {
     };
 }
 
-async function handleRadikoUrls(urls, topicArn, snsClient) {
+async function handleRadikoUrls(urls, description, topicArn, snsClient) {
     const radikoRegex = /^https?:\/\/radiko\.jp\/#!\/ts\/([A-Za-z0-9_-]+)\/(\d{14})/;
     const stations = {};
     const publishResults = [];
@@ -134,6 +134,9 @@ async function handleRadikoUrls(urls, topicArn, snsClient) {
             station_id: stationId,
             start_times: startTimes
         };
+        if (description) {
+            payload.description = description;
+        }
 
         const params = {
             TopicArn: topicArn,
