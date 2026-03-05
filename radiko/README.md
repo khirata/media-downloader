@@ -94,7 +94,7 @@ Example AWS CLI command (concatenating two 1-hour segments), using the created p
 aws sns publish \
   --profile media-downloader-publisher \
   --topic-arn "arn:aws:sns:us-west-2:123456789012:media-downloader-dispatcher" \
-  --message "{\"type\": \"radiko\", \"station_id\": \"FMJ\", \"start_times\": [\"202602221300\", \"202602221400\"]}"
+  --message "{\"type\": \"radiko\", \"station_id\": \"FMJ\", \"start_times\": [\"202602221300\", \"202602221400\"], \"description\": \"JUNK伊集院\"}"
 ```
 
 ### 6. Scheduling Recordings (Cron)
