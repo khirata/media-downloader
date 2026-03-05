@@ -1,0 +1,7 @@
+yt-dlp
+yt-dlp-rajiko
+boto3
+schedule
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib

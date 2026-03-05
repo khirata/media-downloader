@@ -1,0 +1,12 @@
+# AWS Region where resources will be deployed
+aws_region = "us-east-1"
+
+# Project name used to tag all AWS resources for easier identification and billing
+project_name = "url-publisher"
+
+# The ARN of your existing SNS Topic
+sns_topic_arn = "arn:aws:sns:us-east-1:123456789012:your-topic-name"
+
+# (Optional) Custom Secret Token for the extension to send in the x-api-secret header
+# If you leave this as default, the Lambda won't enforce the secret validation.
+secret_token = "your_super_secret_token_here"

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL Publisher Options</title>
+    <link rel="stylesheet" href="options.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>⚙️ Settings</h1>
+            <p>Configure your AWS API Gateway connection</p>
+        </header>
+
+        <main>
+            <form id="settingsForm">
+                <div class="form-group">
+                    <label for="endpoint">API Gateway Endpoint URL</label>
+                    <input type="url" id="endpoint"
+                        placeholder="https://api.execute-api.region.amazonaws.com/prod/publish" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="apiKey">API Key (x-api-key)</label>
+                    <input type="password" id="apiKey" placeholder="Your AWS API Gateway Key">
+                </div>
+
+                <div class="form-group">
+                    <label for="secret">Custom Secret (Optional)</label>
+                    <input type="password" id="secret" placeholder="Additional token or secret for Lambda validation">
+                    <small>Sent in the `x-api-secret` header</small>
+                </div>
+
+                <button type="submit" class="primary-btn" id="saveBtn">Save Settings</button>
+                <span id="statusMessage" class="status-msg"></span>
+            </form>
+        </main>
+    </div>
+
+    <script src="options.js"></script>
+</body>
+
+</html>

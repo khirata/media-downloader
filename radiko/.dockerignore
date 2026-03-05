@@ -1,0 +1,70 @@
+# =========================
+# 1. Secrets & Configs (CRITICAL)
+# =========================
+.env
+client_secret.json
+token.json
+
+# =========================
+# 2. Project Data & Media
+# =========================
+# Ignore all downloaded radio programs and runtime logs
+downloads/
+logs/
+
+# =========================
+# 3. Python Specific
+# =========================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments (if you ever run the script locally without Docker)
+venv/
+.venv/
+env/
+ENV/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# =========================
+# 4. OS Generated Files
+# =========================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# =========================
+# 5. Temporary Files
+# =========================
+*~
+.*~
+
+# =========================
+# 6. Terraform
+# =========================
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*tfplan*
+.terraformrc
+terraform.rc
+.terraform.lock.hcl
+*.tf

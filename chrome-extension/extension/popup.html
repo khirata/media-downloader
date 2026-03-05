@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>URL Publisher</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>URL Publisher</h1>
+      <button id="settingsBtn" class="icon-btn" title="Settings">⚙️</button>
+    </header>
+
+    <main>
+      <div id="urlList" class="url-list">
+        <!-- URL items will be injected here -->
+      </div>
+      
+      <div class="empty-state" id="emptyState" style="display: none;">
+        <p>No URLs in stack.</p>
+        <p class="sub-text">Current tab URL will be added automatically.</p>
+      </div>
+    </main>
+
+    <footer>
+      <button id="addManualBtn" class="secondary-btn">Add Manual URL</button>
+      <button id="publishAllBtn" class="primary-btn">Publish All</button>
+    </footer>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>

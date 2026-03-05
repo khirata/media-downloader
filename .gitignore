@@ -1,0 +1,93 @@
+# =========================
+# 1. Secrets & Configs (CRITICAL)
+# =========================
+.env
+client_secret.json
+token.json
+
+# =========================
+# 2. Project Data & Media
+# =========================
+# Ignore all downloaded radio programs and runtime logs
+downloads/
+logs/
+
+# =========================
+# 3. Python / Node.js Specific
+# =========================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments (if you ever run the script locally without Docker)
+venv/
+.venv/
+env/
+ENV/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+
+# =========================
+# 4. OS / IDE Generated Files
+# =========================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# =========================
+# 5. Temporary / Archives
+# =========================
+*~
+.*~
+*.zip
+
+# =========================
+# 6. Terraform
+# =========================
+# Local .terraform directories
+**/.terraform/*
+
+# .tfstate files
+*.tfstate
+*.tfstate.*
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Exclude all .tfvars files
+*.tfvars
+*.tfvars.json
+
+# Ignore override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Include tfplan files
+*tfplan*
+
+# Ignore CLI configuration files
+.terraformrc
+terraform.rc
+
+# Ignore lock file
+.terraform.lock.hcl

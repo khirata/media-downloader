@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "URL Publisher",
+  "version": "1.0",
+  "description": "Stack URLs and publish them to an AWS SNS topic.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "URL Publisher"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "<all_urls>"
+  ]
+}
