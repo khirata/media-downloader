@@ -61,7 +61,8 @@ If you want to use Google Drive:
 ### 3. Configure Environment Variables
 Create a `../.env` file in the project root (or set these in your host environment) matching your `docker-compose.yml`. Use the outputs from the Terraform configuration for the AWS values:
 ```env
-SQS_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/123456789012/media-downloader-radiko
+RADIKO_SQS_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/123456789012/media-downloader-radiko
+TVER_SQS_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/123456789012/media-downloader-tver
 AWS_ACCESS_KEY_ID=your_terraform_radiko_access_key
 AWS_SECRET_ACCESS_KEY=your_terraform_radiko_secret_key
 AWS_REGION=us-west-2

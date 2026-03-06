@@ -61,7 +61,8 @@ Google Drive を使用したい場合：
 ### 3. 環境変数の設定
 プロジェクトルートに `../.env` ファイルを作成する (またはホスト環境で設定する) ことで、`docker-compose.yml` にあわせた設定を行います。AWS の値には Terraform の設定出力を使用します：
 ```env
-SQS_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/123456789012/media-downloader-radiko
+RADIKO_SQS_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/123456789012/media-downloader-radiko
+TVER_SQS_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/123456789012/media-downloader-tver
 AWS_ACCESS_KEY_ID=your_terraform_radiko_access_key
 AWS_SECRET_ACCESS_KEY=your_terraform_radiko_secret_key
 AWS_REGION=us-west-2
