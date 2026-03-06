@@ -1,4 +1,4 @@
-# Serverless Media Downloader
+# Serverless Media Downloader ([日本語](./README_ja.md))
 
 This repository contains an automated, event-driven media recording system designed to download streaming media (such as Radiko radio programs and TVer videos), stitch them together if necessary, and ultimately save them locally or upload them securely to Google Drive.
 
