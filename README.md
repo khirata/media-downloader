@@ -18,7 +18,11 @@ To run this project, you need the following infrastructure and tools:
 * **Terraform** (To automatically provision the required AWS infrastructure)
 * **AWS Account** (For SNS Topics, SQS Queues, and IAM Users)
 * **Google Account** (Destination for saving Radiko audio files. You can skip this and save locally. A **Google Workspace** account is recommended for avoiding 7-day token expirations.)
-* **AWS CLI v2** (For sending manual recording requests from the host machine)
+*   **Docker & Docker Compose** (Host machine, e.g., Ubuntu/Linux)
+*   **Terraform** (To automatically provision the required AWS infrastructure)
+*   **AWS Account** (For SNS Topics, SQS Queues, and IAM Users)
+*   **Google Account** (Destination for saving Radiko audio files. You can skip this and save locally. A **Google Workspace** account is recommended for avoiding 7-day token expirations.)
+*   **AWS CLI v2** (For sending manual recording requests from the host machine)
 
 ---
 
@@ -29,9 +33,9 @@ This project uses Terraform to automate the creation of the required AWS SNS Top
 
 You will need to run Terraform in three separate directories, in this specific order:
 
-1. **API Gateway (`api-gw/`)**: Creates the main SNS dispatcher topic and publisher credentials.
-2. **Radiko (`radiko/`)**: Creates the Radiko SQS queue and worker credentials.
-3. **TVer (`tver/`)**: Creates the TVer SQS queue and worker credentials.
+1.  **API Gateway (`api-gw/`)**: Creates the main SNS dispatcher topic and publisher credentials.
+2.  **Radiko (`radiko/`)**: Creates the Radiko SQS queue and worker credentials.
+3.  **TVer (`tver/`)**: Creates the TVer SQS queue and worker credentials.
 
 For each directory:
 ```bash
@@ -55,13 +59,14 @@ If you want to use Google Drive:
 4. Run the local authentication script to generate your `token.json` file. Place `token.json` in the `radiko/` folder. *(Note: Do not include `client_secret.json` in the runtime environment).*
 
 ### 3. Configure Docker Environment Variables
-Create a central `.env` file in the **project root**. Start by copying the example:
+You must create a `.env` file in **both** the `radiko/` and `tver/` directories. Start by copying the examples:
 
 ```bash
-cp .env.example .env
+cp radiko/.env.example radiko/.env
+cp tver/.env.example tver/.env
 ```
 
-Edit the `.env` file and fill in your newly provisioned AWS credentials, SQS Queue URLs, and Google Drive folder ID (if applicable).
+Edit both `.env` files and fill in your newly provisioned AWS credentials, SQS Queue URLs, and Google Drive folder ID (if applicable).
 
 ### 4. Deploy the Workers
 You can start the workers independently by navigating to their directories:
@@ -111,7 +116,12 @@ For automatic, recurring recordings (like a weekly radio show), use your system'
 ## 🎛️ yt-dlp Configuration
 This project supports passing global arguments to `yt-dlp` via environment variables.
 
-You can set a `YT_DLP_ARGS` variable in your central `.env` file to apply global options (like concurrent connections, proxies, or premium account credentials) to all recordings.
+You can set a `YT_DLP_ARGS` variable in your respective `.env` files to apply global options (like concurrent connections, proxies, or premium account credentials) to all recordings for that worker.
 ```env
+# Download Storage Configuration
+# Set this to save media to a specific folder on your host machine.
+# If left blank or commented out, downloads default to the host's /tmp directory.
+DOWNLOAD_DIR=/path/to/your/custom/folder
+
 YT_DLP_ARGS="-N 10 --extractor-args rajiko:premium_user=YOUR_USERNAME;premium_pass=YOUR_PASSWORD"
 ```

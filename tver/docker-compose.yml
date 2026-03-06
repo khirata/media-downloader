@@ -4,17 +4,17 @@ services:
     container_name: tver_recorder
     restart: unless-stopped
     env_file:
-      - ../.env
+      - .env
     environment:
       # AWS Configuration
-      - AWS_ACCESS_KEY_ID=${TVER_AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${TVER_AWS_SECRET_ACCESS_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=${AWS_REGION:-ap-northeast-1}
-      - SQS_QUEUE_URL=${TVER_SQS_QUEUE_URL}
+      - SQS_QUEUE_URL=${SQS_QUEUE_URL}
 
       # System Configuration
       - TZ=${TZ:-Asia/Tokyo}
 
     volumes:
       # Local storage mapping
-      - /tmp:/app/downloads
+      - ${DOWNLOAD_DIR:-/tmp}:/app/downloads

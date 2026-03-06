@@ -55,13 +55,14 @@ Google Drive を使用したい場合：
 4. ローカルの認証スクリプトを実行して `token.json` ファイルを生成し、`radiko/` フォルダ内に配置します。*(注: `client_secret.json` は実行環境には含めないでください)。*
 
 ### 3. Docker 環境変数の設定
-**プロジェクトのルートディレクトリ**に中央の `.env` ファイルを作成します。まずは example ファイルをコピーします：
+`radiko/` および `tver/` ディレクトリの**それぞれ**に `.env` ファイルを作成する必要があります。まずは example ファイルをコピーします：
 
 ```bash
-cp .env.example .env
+cp radiko/.env.example radiko/.env
+cp tver/.env.example tver/.env
 ```
 
-`.env` ファイルを編集し、新しくプロビジョニングした AWS 認証情報、それぞれの SQS キュー URL、および Google Drive フォルダ ID (該当する場合) を入力します。
+2つの `.env` ファイルをそれぞれ編集し、新しくプロビジョニングした AWS 認証情報、該当する SQS キュー URL、および Google Drive フォルダ ID (該当する場合) を入力します。
 
 ### 4. ワーカのデプロイ
 それぞれのディレクトリに移動して、ワーカを個別に開始できます：
@@ -111,7 +112,12 @@ aws sns publish \
 ## 🎛️ yt-dlp のグローバル設定
 このプロジェクトでは、環境変数を経由して `yt-dlp` にグローバルな引数を渡すことができます。
 
-中央の `.env` ファイルに `YT_DLP_ARGS` 変数を設定することで、すべてのダウンロードに共通して適用されるオプション（同時接続数、プロキシ、プレミアムアカウントの認証情報など）を指定できます。
+各ワーカの `.env` ファイルに `YT_DLP_ARGS` 変数を設定することで、そのワーカのすべてのダウンロードに共通して適用されるオプション（同時接続数、プロキシ、プレミアムアカウントの認証情報など）を指定できます。
 ```env
+# Download Storage Configuration
+# Set this to save media to a specific folder on your host machine.
+# If left blank or commented out, downloads default to the host's /tmp directory.
+DOWNLOAD_DIR=/path/to/your/custom/folder
+
 YT_DLP_ARGS="-N 10 --extractor-args rajiko:premium_user=YOUR_USERNAME;premium_pass=YOUR_PASSWORD"
 ```
