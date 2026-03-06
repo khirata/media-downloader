@@ -37,8 +37,8 @@ For each directory:
 ```bash
 cd [directory]
 terraform init
-terraform plan
-terraform apply
+terraform plan -var-file="../terraform.tfvars"
+terraform apply -var-file="../terraform.tfvars"
 cd ..
 ```
 *(Note: Be sure to configure `terraform.tfvars` from the provided example `terraform.tfvars.example` to centralize your config before applying).*

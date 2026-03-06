@@ -37,8 +37,8 @@
 ```bash
 cd [ディレクトリ名]
 terraform init
-terraform plan
-terraform apply
+terraform plan -var-file="../terraform.tfvars"
+terraform apply -var-file="../terraform.tfvars"
 cd ..
 ```
 *(注: 適用する前に、提供されている `terraform.tfvars.example` を参考に `terraform.tfvars` を設定し、設定を中央管理（一元化）してください)。*
