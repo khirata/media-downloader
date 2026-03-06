@@ -48,12 +48,15 @@ exports.handler = async (event) => {
 
         const publishResults = [];
         const radikoUrls = [];
+        const tverUrls = [];
         const unhandledUrls = [];
 
         // Dispatch based on URL
         for (const u of urlList) {
             if (u.includes('radiko.jp')) {
                 radikoUrls.push(u);
+            } else if (u.includes('tver.jp')) {
+                tverUrls.push(u);
             } else {
                 unhandledUrls.push(u);
             }
@@ -64,6 +67,12 @@ exports.handler = async (event) => {
         // Process Radiko URLs
         if (radikoUrls.length > 0) {
             const results = await handleRadikoUrls(radikoUrls, description, topicArn, snsClient);
+            publishResults.push(...results);
+        }
+
+        // Process TVer URLs
+        if (tverUrls.length > 0) {
+            const results = await handleTverUrls(tverUrls, topicArn, snsClient);
             publishResults.push(...results);
         }
 
@@ -151,6 +160,36 @@ async function handleRadikoUrls(urls, description, topicArn, snsClient) {
         publishResults.push({
             type: 'radiko',
             stationId,
+            messageId: result.MessageId
+        });
+    }
+
+    return publishResults;
+}
+
+async function handleTverUrls(urls, topicArn, snsClient) {
+    const publishResults = [];
+
+    // TVer publishes each URL independently
+    for (const u of urls) {
+        const payload = {
+            type: 'tver',
+            url: u
+        };
+
+        const params = {
+            TopicArn: topicArn,
+            Message: JSON.stringify(payload),
+            Subject: 'TVer Recording Scheduled'
+        };
+
+        const command = new PublishCommand(params);
+        const result = await snsClient.send(command);
+        console.log(`Successfully published TVer message ID: ${result.MessageId} for URL ${u}`);
+
+        publishResults.push({
+            type: 'tver',
+            url: u,
             messageId: result.MessageId
         });
     }

@@ -25,18 +25,9 @@ locals {
   camel_name = replace(title(var.base_name), " ", "")
 }
 
-# ==========================================
-# SNS Topic (The Master Dispatcher)
-# ==========================================
-resource "aws_sns_topic" "dispatcher" {
-  name = "${local.kebab_name}-dispatcher"
-}
-
-# ==========================================
-# Shared Dead Letter Queue
-# ==========================================
-resource "aws_sqs_queue" "shared_dlq" {
-  name = "${local.kebab_name}-dlq"
+variable "sns_topic_arn" {
+  description = "ARN of the dispatcher SNS topic"
+  type        = string
 }
 
 # ==========================================
@@ -50,14 +41,14 @@ resource "aws_sqs_queue" "radiko_queue" {
   visibility_timeout_seconds = 3600
 
   redrive_policy = jsonencode({
-    deadLetterTargetArn = aws_sqs_queue.shared_dlq.arn
+    deadLetterTargetArn = aws_sqs_queue.radiko_dlq.arn
     maxReceiveCount     = 3 # Move to DLQ after 3 failed attempts
   })
 }
 
 # SNS Subscription with Filter Policy
 resource "aws_sns_topic_subscription" "radiko_subscription" {
-  topic_arn = aws_sns_topic.dispatcher.arn
+  topic_arn = var.sns_topic_arn
   protocol  = "sqs"
   endpoint  = aws_sqs_queue.radiko_queue.arn
   raw_message_delivery = true
@@ -86,9 +77,16 @@ data "aws_iam_policy_document" "sns_to_radiko_sqs" {
     condition {
       test     = "ArnEquals"
       variable = "aws:SourceArn"
-      values   = [aws_sns_topic.dispatcher.arn]
+      values   = [var.sns_topic_arn]
     }
   }
+}
+
+# ==========================================
+# Dead Letter Queue for Radiko
+# ==========================================
+resource "aws_sqs_queue" "radiko_dlq" {
+  name = "${local.kebab_name}-radiko-dlq"
 }
 
 
@@ -124,64 +122,6 @@ resource "aws_iam_user_policy" "radiko_worker_policy" {
 
 resource "aws_iam_access_key" "radiko_key" {
   user = aws_iam_user.radiko_worker.name
-}
-
-
-# ==========================================
-# IAM Policy for the Dispatcher (Publisher)
-# ==========================================
-resource "aws_iam_policy" "dispatcher_publisher_policy" {
-  name        = "${local.camel_name}DispatcherPolicy"
-  path        = "/"
-  description = "Allows publishing messages to the ${var.base_name} SNS Topic"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "sns:Publish"
-        ]
-        Resource = aws_sns_topic.dispatcher.arn
-      }
-    ]
-  })
-}
-
-resource "aws_iam_user" "publisher" {
-  name = "${local.kebab_name}-publisher"
-  path = "/"
-}
-
-resource "aws_iam_user_policy_attachment" "publisher_policy_attachment" {
-  user       = aws_iam_user.publisher.name
-  policy_arn = aws_iam_policy.dispatcher_publisher_policy.arn
-}
-
-resource "aws_iam_access_key" "publisher_key" {
-  user = aws_iam_user.publisher.name
-}
-
-
-# ==========================================
-# OUTPUTS
-# ==========================================
-
-output "sns_topic_arn" {
-  value       = aws_sns_topic.dispatcher.arn
-  description = "ARN of the dispatcher SNS topic"
-}
-
-output "publisher_access_key_id" {
-  value       = aws_iam_access_key.publisher_key.id
-  description = "Access key for the publisher"
-}
-
-output "publisher_secret_access_key" {
-  value       = aws_iam_access_key.publisher_key.secret
-  description = "Secret key for the publisher"
-  sensitive   = true
 }
 
 output "radiko_sqs_queue_url" {

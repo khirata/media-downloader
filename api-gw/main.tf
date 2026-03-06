@@ -41,9 +41,47 @@ variable "secret_token" {
   sensitive   = true
 }
 
-variable "sns_topic_arn" {
-  description = "ARN of the existing SNS topic to publish URLs to"
-  type        = string
+# ==========================================
+# SNS Topic (The Master Dispatcher)
+# ==========================================
+resource "aws_sns_topic" "dispatcher" {
+  name = "media-downloader-dispatcher"
+}
+
+# ==========================================
+# IAM Policy for the Dispatcher (Publisher)
+# ==========================================
+resource "aws_iam_policy" "dispatcher_publisher_policy" {
+  name        = "MediaDownloaderDispatcherPolicy"
+  path        = "/"
+  description = "Allows publishing messages to the Media Downloader SNS Topic"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sns:Publish"
+        ]
+        Resource = aws_sns_topic.dispatcher.arn
+      }
+    ]
+  })
+}
+
+resource "aws_iam_user" "publisher" {
+  name = "media-downloader-publisher"
+  path = "/"
+}
+
+resource "aws_iam_user_policy_attachment" "publisher_policy_attachment" {
+  user       = aws_iam_user.publisher.name
+  policy_arn = aws_iam_policy.dispatcher_publisher_policy.arn
+}
+
+resource "aws_iam_access_key" "publisher_key" {
+  user = aws_iam_user.publisher.name
 }
 
 # Zip Lambda function
@@ -85,7 +123,7 @@ resource "aws_iam_role_policy" "lambda_sns_policy" {
     Statement = [{
       Effect   = "Allow"
       Action   = "sns:Publish"
-      Resource = var.sns_topic_arn
+      Resource = aws_sns_topic.dispatcher.arn
     }]
   })
 }
@@ -101,7 +139,7 @@ resource "aws_lambda_function" "publisher" {
 
   environment {
     variables = {
-      SNS_TOPIC_ARN = var.sns_topic_arn
+      SNS_TOPIC_ARN = aws_sns_topic.dispatcher.arn
       SECRET_TOKEN  = var.secret_token
     }
   }
@@ -253,4 +291,20 @@ output "api_key" {
   value       = aws_api_gateway_api_key.extension_key.value
   sensitive   = true
   description = "API Key to put in Chrome Extension options"
+}
+
+output "sns_topic_arn" {
+  value       = aws_sns_topic.dispatcher.arn
+  description = "ARN of the dispatcher SNS topic"
+}
+
+output "publisher_access_key_id" {
+  value       = aws_iam_access_key.publisher_key.id
+  description = "Access key for the publisher"
+}
+
+output "publisher_secret_access_key" {
+  value       = aws_iam_access_key.publisher_key.secret
+  description = "Secret key for the publisher"
+  sensitive   = true
 }
