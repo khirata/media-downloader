@@ -59,7 +59,7 @@ If you want to use Google Drive:
 5. Run the local authentication script to generate your `token.json` file. Place `token.json` in the root of this project. *(Note: Do not include `client_secret.json` in the runtime environment).*
 
 ### 3. Configure Environment Variables
-Create a `.env` file (or set these in your host environment) matching your `docker-compose.yml`. Use the outputs from the Terraform configuration for the AWS values:
+Create a `../.env` file in the project root (or set these in your host environment) matching your `docker-compose.yml`. Use the outputs from the Terraform configuration for the AWS values:
 ```env
 SQS_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/123456789012/media-downloader-radiko
 AWS_ACCESS_KEY_ID=your_terraform_radiko_access_key
@@ -121,7 +121,7 @@ MEDIA_DOWNLOADER_SNS=arn:aws:sns:us-west-2:123456789012:media-downloader-dispatc
 This project supports three flexible ways to pass arguments to `yt-dlp` (and its extractors like `yt-dlp-rajiko`).
 
 ### 1. Global Environment Variable
-You can set a `YT_DLP_ARGS` variable in your `.env` file to apply global options (like concurrent connections, proxies, or premium account credentials) to all recordings.
+You can set a `YT_DLP_ARGS` variable in your `../.env` file to apply global options (like concurrent connections, proxies, or premium account credentials) to all recordings.
 ```env
 YT_DLP_ARGS="-N 10 --extractor-args rajiko:premium_user=YOUR_USERNAME;premium_pass=YOUR_PASSWORD"
 ```

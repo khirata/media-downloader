@@ -3,6 +3,8 @@ services:
     build: .
     container_name: tver_recorder
     restart: unless-stopped
+    env_file:
+      - ../.env
     environment:
       # AWS Configuration
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}

@@ -59,7 +59,7 @@ Google Drive を使用したい場合：
 5. ローカルの認証スクリプトを実行して `token.json` ファイルを生成します。`token.json` は本プロジェクトのルートディレクトリに配置してください。*(注: `client_secret.json` は実行環境には含めないでください)。*
 
 ### 3. 環境変数の設定
-`.env` ファイルを作成する (またはホスト環境で設定する) ことで、`docker-compose.yml` にあわせた設定を行います。AWS の値には Terraform の設定出力を使用します：
+プロジェクトルートに `../.env` ファイルを作成する (またはホスト環境で設定する) ことで、`docker-compose.yml` にあわせた設定を行います。AWS の値には Terraform の設定出力を使用します：
 ```env
 SQS_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/123456789012/media-downloader-radiko
 AWS_ACCESS_KEY_ID=your_terraform_radiko_access_key
@@ -121,7 +121,7 @@ MEDIA_DOWNLOADER_SNS="arn:aws:sns:us-west-2:123456789012:media-downloader-dispat
 このプロジェクトでは、`yt-dlp` (および `yt-dlp-rajiko` などのエクストラクタ) に引数を渡すための柔軟な3つの方法をサポートしています。
 
 ### 1. グローバル環境変数
-`.env` ファイルに `YT_DLP_ARGS` 変数を設定することで、すべての録音に適用されるグローバルなオプション（同時接続数、プロキシ、プレミアムアカウントの認証情報など）を指定できます。
+`../.env` ファイルに `YT_DLP_ARGS` 変数を設定することで、すべての録音に適用されるグローバルなオプション（同時接続数、プロキシ、プレミアムアカウントの認証情報など）を指定できます。
 ```env
 YT_DLP_ARGS="-N 10 --extractor-args rajiko:premium_user=YOUR_USERNAME;premium_pass=YOUR_PASSWORD"
 ```
