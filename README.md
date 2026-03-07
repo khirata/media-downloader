@@ -150,7 +150,11 @@ docker compose up -d --build
 The containers will now run silently in the background, polling their respective SQS queues for recording tasks.
 
 ### 5. Deploy & Configure the Chrome Extension
-The included Chrome Extension is the primary way to quickly capture and dispatch Media URLs. Since it is not published to the Chrome Web Store, you must load it locally.
+The included Chrome Extension is the primary way to quickly capture and dispatch Media URLs. 
+
+> **💡 Note:** This extension is built as a general-purpose HTTP POST client. While pre-configured instructions are provided for this project's dispatcher, you can point it at **any** API Gateway or compatible webhook that accepts `{"urls": ["..."]}` and identical headers (`x-api-key`, `x-api-secret`).
+
+Since it is not published to the Chrome Web Store, you must load it locally.
 
 **Installation:**
 1. Open Google Chrome.
