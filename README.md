@@ -40,8 +40,8 @@ graph TD
 
     %% Client flows
     EXT -->|"HTTP POST (URL)"| API
+    CLI -->|"HTTP POST (curl)"| API
     API -->|"AWS SDK Publish<br/>{type: '...'} "| SNS
-    CLI -->|"aws sns publish<br/>{type: '...'} "| SNS
 
     %% Dispatcher routing based on message attributes/body
     SNS -->|"Filter Policy<br/>type: 'radiko'"| SQS_R
@@ -149,32 +149,45 @@ docker compose up -d --build
 ```
 The containers will now run silently in the background, polling their respective SQS queues for recording tasks.
 
-### 5. Trigger a Recording
-While the primary method of dispatching URLs is via the Chrome extension interfacing with the API Gateway, you can still trigger recordings manually using the AWS CLI.
+### 5. Triggering & Scheduling Recordings (HTTP API)
+While the primary method of dispatching URLs is via the Chrome extension interfacing with the API Gateway, you can still trigger recordings manually or schedule them via `cron` using standard HTTP POST requests. 
 
-Configure a new local AWS profile using the `publisher` access keys provided by the `api-gw` Terraform output:
+This is the recommended approach as it avoids needing to store any AWS IAM credentials on your local machine.
+
+You will need three values from your `api-gw` Terraform output:
+1. `api_endpoint`
+2. `api_key`
+3. `secret_token`
+
+**Manual Trigger (Radiko Example):**
 ```bash
-aws configure --profile media-downloader-publisher
+curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "x-api-secret: YOUR_SECRET_TOKEN" \
+  -d '{"urls": ["https://radiko.jp/#!/ts/FMJ/20260301130000"]}'
 ```
 
-**Radiko Example:**
+**Manual Trigger (TVer Example):**
 ```bash
-aws sns publish \
-  --profile media-downloader-publisher \
-  --topic-arn "arn:aws:sns:us-west-2:123456789012:media-downloader-dispatcher" \
-  --message "{\"type\": \"radiko\", \"station_id\": \"FMJ\", \"start_times\": [\"202602221300\", \"202602221400\"], \"description\": \"JUNK伊集院\"}"
+curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "x-api-secret: YOUR_SECRET_TOKEN" \
+  -d '{"urls": ["https://tver.jp/episodes/ex4mple"]}'
 ```
 
-**Video (TVer/YouTube) Example:**
-```bash
-aws sns publish \
-  --profile media-downloader-publisher \
-  --topic-arn "arn:aws:sns:us-west-2:123456789012:media-downloader-dispatcher" \
-  --message "{\"type\": \"tver\", \"url\": \"https://tver.jp/episodes/ex4mple\"}"
-```
+#### Automating with Cron
+For automatic, recurring recordings (like a weekly radio show), simply add the exact `curl` command above to your system's `crontab`.
 
-### 6. Scheduling Recordings (Cron)
-For automatic, recurring recordings (like a weekly radio show), use your system's `crontab` to automatically publish messages via the `aws sns` CLI. See the `radiko` project documentation (if applicable) or construct standard cron jobs invoking the AWS CLI commands from Step 5.
+**Example Cron Job (Runs every Sunday at 12:55 PM):**
+```bash
+55 12 * * 0 curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "x-api-secret: YOUR_SECRET_TOKEN" \
+  -d '{"urls": ["https://radiko.jp/#!/ts/FMJ/20260301130000"]}' >> /tmp/radiko-cron.log 2>&1
+```
 
 ---
 

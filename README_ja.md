@@ -40,8 +40,8 @@ graph TD
 
     %% Client flows
     EXT -->|"HTTP POST (URL)"| API
+    CLI -->|"HTTP POST (curl)"| API
     API -->|"AWS SDK Publish<br/>{type: '...'} "| SNS
-    CLI -->|"aws sns publish<br/>{type: '...'} "| SNS
 
     %% Dispatcher routing based on message attributes/body
     SNS -->|"Filter Policy<br/>type: 'radiko'"| SQS_R
@@ -145,32 +145,45 @@ docker compose up -d --build
 ```
 これでコンテナはバックグラウンドで静かに動作し、それぞれの SQS キューに録画・録音タスクが届くのを待機します。
 
-### 5. タスクのトリガー (手動リクエスト)
-URL を配信する主要な方法は、Chrome 拡張機能経由で API ゲートウェイにリクエストを送ることですが、AWS CLI を使用して手動でタスクをトリガーすることも可能です。
+### 5. タスクのトリガーとスケジューリング (HTTP API)
+URL を配信する主要な方法は Chrome 拡張機能経由で API ゲートウェイにリクエストを送ることですが、標準的な HTTP POST リクエストを使用して、タスクを手動でトリガーしたり `cron` でスケジュールしたりすることも可能です。
 
-`api-gw` 側の Terraform 出力で提供された `publisher` アクセスキーを使用して、ローカルの AWS CLI プロファイルを新規作成・設定します：
+ローカルマシンに AWS IAM 認証情報を保存する必要がないため、**このアプローチが推奨されます。**
+
+`api-gw` の Terraform 出力から、以下の 3 つの値が必要です：
+1. `api_endpoint`
+2. `api_key`
+3. `secret_token`
+
+**手動トリガー (Radiko の例):**
 ```bash
-aws configure --profile media-downloader-publisher
+curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "x-api-secret: YOUR_SECRET_TOKEN" \
+  -d '{"urls": ["https://radiko.jp/#!/ts/FMJ/20260301130000"]}'
 ```
 
-**Radiko の例:**
+**手動トリガー (TVer の例):**
 ```bash
-aws sns publish \
-  --profile media-downloader-publisher \
-  --topic-arn "arn:aws:sns:us-west-2:123456789012:media-downloader-dispatcher" \
-  --message "{\"type\": \"radiko\", \"station_id\": \"FMJ\", \"start_times\": [\"202602221300\", \"202602221400\"], \"description\": \"JUNK伊集院\"}"
+curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "x-api-secret: YOUR_SECRET_TOKEN" \
+  -d '{"urls": ["https://tver.jp/episodes/ex4mple"]}'
 ```
 
-**動画 (TVer/YouTube) の例:**
-```bash
-aws sns publish \
-  --profile media-downloader-publisher \
-  --topic-arn "arn:aws:sns:us-west-2:123456789012:media-downloader-dispatcher" \
-  --message "{\"type\": \"tver\", \"url\": \"https://tver.jp/episodes/ex4mple\"}"
-```
+#### Cron による自動化
+ラジオのレギュラー番組のように、定期的な自動録画・録音をおこなうには、上記の `curl` コマンドをそのままシステムの `crontab` に追加するだけです。
 
-### 6. スケジューリング (Cron)
-ラジオのレギュラー番組のように、定期的な自動録画・録音をおこなうには、システムの `crontab` を使用し、`aws sns` CLI からメッセージを自動発行します。手順 5 に記載されている AWS CLI コマンドを呼び出す一般的な cron ジョブを構築してください。
+**Cron ジョブの例 (毎週日曜日の 12:55 に実行):**
+```bash
+55 12 * * 0 curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "x-api-secret: YOUR_SECRET_TOKEN" \
+  -d '{"urls": ["https://radiko.jp/#!/ts/FMJ/20260301130000"]}' >> /tmp/radiko-cron.log 2>&1
+```
 
 ---
 
