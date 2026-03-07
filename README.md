@@ -9,11 +9,11 @@ It is structured as a monorepo housing several interconnected components:
 
 ```mermaid
 graph TD
-    classDef client fill:#f9d0c4,stroke:#333,stroke-width:2px;
-    classDef router fill:#d4e6f1,stroke:#333,stroke-width:2px;
-    classDef queue fill:#d5f5e3,stroke:#333,stroke-width:2px;
-    classDef worker fill:#fcf3cf,stroke:#333,stroke-width:2px;
-    classDef storage fill:#e8daef,stroke:#333,stroke-width:2px;
+    classDef client fill:#f9d0c4,stroke:#333,stroke-width:2px,color:#000;
+    classDef router fill:#d4e6f1,stroke:#333,stroke-width:2px,color:#000;
+    classDef queue fill:#d5f5e3,stroke:#333,stroke-width:2px,color:#000;
+    classDef worker fill:#fcf3cf,stroke:#333,stroke-width:2px,color:#000;
+    classDef storage fill:#e8daef,stroke:#333,stroke-width:2px,color:#000;
 
     subgraph Clients ["📤 Clients (Publishers)"]
         direction LR
