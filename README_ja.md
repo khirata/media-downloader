@@ -4,6 +4,60 @@
 
 複数のコンポーネントが連携するモノレポ構成となっています：
 
+<details>
+<summary><b>システムアーキテクチャ図</b></summary>
+
+```mermaid
+graph TD
+    classDef client fill:#f9d0c4,stroke:#333,stroke-width:2px;
+    classDef router fill:#d4e6f1,stroke:#333,stroke-width:2px;
+    classDef queue fill:#d5f5e3,stroke:#333,stroke-width:2px;
+    classDef worker fill:#fcf3cf,stroke:#333,stroke-width:2px;
+    classDef storage fill:#e8daef,stroke:#333,stroke-width:2px;
+
+    subgraph Clients ["📤 クライアント (送信側)"]
+        direction LR
+        EXT["Chrome 拡張機能<br/>(chrome-extension/)"]:::client
+        CLI["AWS CLI / スクリプト<br/>(ローカルターミナル)"]:::client
+    end
+
+    subgraph Dispatcher ["🚦 中央ルーター (api-gw/)"]
+        API["API Gateway + Lambda 関数"]:::router
+        SNS["AWS SNS トピック<br/>(ディスパッチャー)"]:::router
+    end
+
+    subgraph Queues ["📥 メッセージキュー"]
+        SQS_R["Radiko SQS キュー<br/>(radiko/)"]:::queue
+        SQS_T["動画 SQS キュー<br/>(tver/)"]:::queue
+    end
+
+    subgraph Workers ["⚙️ ダウンローダー"]
+        WORK_R["Radiko Python ワーカ<br/>(radiko/)"]:::worker
+        WORK_T["TVer/YouTube Python ワーカ<br/>(tver/)"]:::worker
+    end
+    
+    STORAGE[("ローカルストレージ /<br/>Google ドライブ")]:::storage
+
+    %% Client flows
+    EXT -->|"HTTP POST (URL)"| API
+    API -->|"AWS SDK Publish<br/>{type: '...'} "| SNS
+    CLI -->|"aws sns publish<br/>{type: '...'} "| SNS
+
+    %% Dispatcher routing based on message attributes/body
+    SNS -->|"Filter Policy<br/>type: 'radiko'"| SQS_R
+    SNS -->|"Filter Policy<br/>type: 'tver' or 'youtube'"| SQS_T
+
+    %% Worker polling
+    SQS_R -->|"ロングポーリング"| WORK_R
+    SQS_T -->|"ロングポーリング"| WORK_T
+
+    %% Final output
+    WORK_R -.->|"保存 & アップロード"| STORAGE
+    WORK_T -.->|"yt-dlp で保存"| STORAGE
+```
+
+</details>
+
 ## 🗂️ プロジェクト構成
 
 * **[chrome-extension](./chrome-extension/)**: ブラウザから URL をキャプチャし、API ゲートウェイに送信する Chrome 拡張機能。
@@ -122,5 +176,8 @@ DOWNLOAD_DIR=/path/to/your/custom/folder
 # ファイルの所有権 (オプション)
 # ホストに保存する場合、ダウンロードしたファイルにアクセスできるようにユーザーIDとグループIDを設定します。
 # これらはホストマシンで `id -u` および `id -g` を実行することで確認できます。
+PUID=1000
+PGID=1000
+
 YT_DLP_ARGS="-N 10 --extractor-args rajiko:premium_user=YOUR_USERNAME;premium_pass=YOUR_PASSWORD"
 ```

@@ -4,6 +4,60 @@ This repository contains an automated, event-driven media recording system desig
 
 It is structured as a monorepo housing several interconnected components:
 
+<details>
+<summary><b>System Architecture Diagram</b></summary>
+
+```mermaid
+graph TD
+    classDef client fill:#f9d0c4,stroke:#333,stroke-width:2px;
+    classDef router fill:#d4e6f1,stroke:#333,stroke-width:2px;
+    classDef queue fill:#d5f5e3,stroke:#333,stroke-width:2px;
+    classDef worker fill:#fcf3cf,stroke:#333,stroke-width:2px;
+    classDef storage fill:#e8daef,stroke:#333,stroke-width:2px;
+
+    subgraph Clients ["📤 Clients (Publishers)"]
+        direction LR
+        EXT["Chrome Extension<br/>(chrome-extension/)"]:::client
+        CLI["AWS CLI / Scripts<br/>(Local Terminal)"]:::client
+    end
+
+    subgraph Dispatcher ["🚦 Central Router (api-gw/)"]
+        API["API Gateway + Lambda function"]:::router
+        SNS["AWS SNS Topic<br/>(The Dispatcher)"]:::router
+    end
+
+    subgraph Queues ["📥 Message Queues"]
+        SQS_R["Radiko SQS Queue<br/>(radiko/)"]:::queue
+        SQS_T["Video SQS Queue<br/>(tver/)"]:::queue
+    end
+
+    subgraph Workers ["⚙️ Downloaders"]
+        WORK_R["Radiko Python Worker<br/>(radiko/)"]:::worker
+        WORK_T["TVer/YouTube Python Worker<br/>(tver/)"]:::worker
+    end
+    
+    STORAGE[("Local Storage /<br/>Google Drive")]:::storage
+
+    %% Client flows
+    EXT -->|"HTTP POST (URL)"| API
+    API -->|"AWS SDK Publish<br/>{type: '...'} "| SNS
+    CLI -->|"aws sns publish<br/>{type: '...'} "| SNS
+
+    %% Dispatcher routing based on message attributes/body
+    SNS -->|"Filter Policy<br/>type: 'radiko'"| SQS_R
+    SNS -->|"Filter Policy<br/>type: 'tver' or 'youtube'"| SQS_T
+
+    %% Worker polling
+    SQS_R -->|"Long Polling"| WORK_R
+    SQS_T -->|"Long Polling"| WORK_T
+
+    %% Final output
+    WORK_R -.->|"Save & Upload"| STORAGE
+    WORK_T -.->|"Save via yt-dlp"| STORAGE
+```
+
+</details>
+
 ## 🗂️ Projects
 
 * **[chrome-extension](./chrome-extension/)**: A Chrome extension that captures URLs from the browser and sends them to the API Gateway.
