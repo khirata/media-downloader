@@ -48,41 +48,7 @@ resource "aws_sns_topic" "dispatcher" {
   name = "media-downloader-dispatcher"
 }
 
-# ==========================================
-# IAM Policy for the Dispatcher (Publisher)
-# ==========================================
-resource "aws_iam_policy" "dispatcher_publisher_policy" {
-  name        = "MediaDownloaderDispatcherPolicy"
-  path        = "/"
-  description = "Allows publishing messages to the Media Downloader SNS Topic"
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "sns:Publish"
-        ]
-        Resource = aws_sns_topic.dispatcher.arn
-      }
-    ]
-  })
-}
-
-resource "aws_iam_user" "publisher" {
-  name = "media-downloader-publisher"
-  path = "/"
-}
-
-resource "aws_iam_user_policy_attachment" "publisher_policy_attachment" {
-  user       = aws_iam_user.publisher.name
-  policy_arn = aws_iam_policy.dispatcher_publisher_policy.arn
-}
-
-resource "aws_iam_access_key" "publisher_key" {
-  user = aws_iam_user.publisher.name
-}
 
 # Zip Lambda function
 data "archive_file" "lambda_zip" {
@@ -298,13 +264,4 @@ output "sns_topic_arn" {
   description = "ARN of the dispatcher SNS topic"
 }
 
-output "publisher_access_key_id" {
-  value       = aws_iam_access_key.publisher_key.id
-  description = "Access key for the publisher"
-}
 
-output "publisher_secret_access_key" {
-  value       = aws_iam_access_key.publisher_key.secret
-  description = "Secret key for the publisher"
-  sensitive   = true
-}
