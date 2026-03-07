@@ -81,7 +81,13 @@ graph TD
 ### 1. AWS リソースのプロビジョニング (Terraform)
 このプロジェクトは Terraform を使用して、必要な AWS SNS トピック、SQS キュー、および IAM ワーカの認証情報を自動的に作成します。
 
-以下の3つのディレクトリで、**この順番通り**に Terraform を実行する必要があります：
+Terraform を実行する前に、ルートディレクトリに一元管理用の設定ファイルを作成する必要があります：
+```bash
+cp terraform.tfvars.example terraform.tfvars
+```
+新しく作成した `terraform.tfvars` ファイルを編集し、`aws_region`、カスタムの `secret_token`、および `sns_topic_arn`（API Gateway をデプロイした後に取得します）などのすべての変更が必要な値を更新してください。
+
+次に、以下の3つのディレクトリで、**この順番通り**に Terraform を実行する必要があります：
 
 1. **API Gateway (`api-gw/`)**: メインの SNS ディスパッチャートピックとパブリッシャー（発行者）認証情報を作成します。
 2. **Radiko (`radiko/`)**: Radiko 用 SQS キューとワーカ認証情報を作成します。
@@ -95,7 +101,6 @@ terraform plan -var-file="../terraform.tfvars"
 terraform apply -var-file="../terraform.tfvars"
 cd ..
 ```
-*(注: 適用する前に、提供されている `terraform.tfvars.example` を参考に `terraform.tfvars` を設定し、設定を中央管理（一元化）してください)。*
 
 Terraform の実行が完了すると、必要な IAM アクセスキー、SQS キューの URL、および SNS トピックの ARN が出力されます。これらの値は、手順 3 の `.env` ファイル設定で使用するため控えておいてください。
 

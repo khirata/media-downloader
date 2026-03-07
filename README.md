@@ -85,7 +85,13 @@ To run this project, you need the following infrastructure and tools:
 ### 1. Provision AWS Resources (Terraform)
 This project uses Terraform to automate the creation of the required AWS SNS Topics, SQS Queues, and IAM Worker credentials.
 
-You will need to run Terraform in three separate directories, in this specific order:
+Before running Terraform, you must create a centralized configuration file in the root directory:
+```bash
+cp terraform.tfvars.example terraform.tfvars
+```
+Edit the newly created `terraform.tfvars` file and update all missing values like `aws_region`, your custom `secret_token`, and the `sns_topic_arn` (which you will get after deploying `api-gw`).
+
+Next, you will need to run Terraform in three separate directories, in this specific order:
 
 1.  **API Gateway (`api-gw/`)**: Creates the main SNS dispatcher topic and publisher credentials.
 2.  **Radiko (`radiko/`)**: Creates the Radiko SQS queue and worker credentials.
@@ -99,7 +105,6 @@ terraform plan -var-file="../terraform.tfvars"
 terraform apply -var-file="../terraform.tfvars"
 cd ..
 ```
-*(Note: Be sure to configure `terraform.tfvars` from the provided example `terraform.tfvars.example` to centralize your config before applying).*
 
 Terraform will output the necessary IAM access keys, SQS Queue URLs, and the SNS Topic ARN. Keep these values handy for the `.env` file configuration in Step 3.
 
