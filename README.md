@@ -167,21 +167,32 @@ For automatic, recurring recordings (like a weekly radio show), use your system'
 
 ---
 
-## 🎛️ yt-dlp Configuration
-This project supports passing global arguments to `yt-dlp` via environment variables.
+## 🎛️ Environment Configuration
 
-You can set a `YT_DLP_ARGS` variable in your respective `.env` files to apply global options (like concurrent connections, proxies, or premium account credentials) to all recordings for that worker.
+Both `radiko/.env` and `tver/.env` share a similar structure, providing robust configuration options:
+
+| Variable | Required | Description |
+| :--- | :---: | :--- |
+| `AWS_ACCESS_KEY_ID` | Yes | The IAM access key for the specific downloader worker (from Terraform). |
+| `AWS_SECRET_ACCESS_KEY`| Yes | The IAM secret key for the specific downloader worker. |
+| `AWS_REGION` | No | Defaults to `ap-northeast-1`. |
+| `SQS_QUEUE_URL` | Yes | The absolute URL of the SQS queue this worker should poll. |
+| `GDRIVE_FOLDER_ID` | No | **(Radiko only)** ID of a Google Drive folder. If omitted, files are kept locally. |
+| `DOWNLOAD_DIR` | No | The absolute path on your host machine to save media. Defaults to `/tmp`. |
+| `PUID` / `PGID` | No | Your host machine's User and Group ID. Ensures downloaded files are owned by you instead of `root`. Find via `id -u` and `id -g`. |
+| `YT_DLP_ARGS` | No | Global arguments injected into every `yt-dlp` execution. |
+| `TZ` | No | Timezone for log timestamps. Defaults to `Asia/Tokyo`. |
+
+### Advanced: `YT_DLP_ARGS`
+
+You can use the `YT_DLP_ARGS` variable to apply critical `yt-dlp` global options (like concurrent connections, proxies, or premium credentials) seamlessly.
+
+**Example: Radiko Premium User**
 ```env
-# Download Storage Configuration
-# Set this to save media to a specific folder on your host machine.
-# If left blank or commented out, downloads default to the host's /tmp directory.
-DOWNLOAD_DIR=/path/to/your/custom/folder
-
-# File Ownership (Optional)
-# If saving to the host, set your user and group IDs so the downloaded files are accessible.
-# You can find these by running `id -u` and `id -g` on your host machine.
-PUID=1000
-PGID=1000
-
 YT_DLP_ARGS="-N 10 --extractor-args rajiko:premium_user=YOUR_USERNAME;premium_pass=YOUR_PASSWORD"
+```
+
+**Example: Video Resolution Capping (TVer/YouTube)**
+```env
+YT_DLP_ARGS="-N 10 -f 'bestvideo[height<=1080]+bestaudio/best'"
 ```
