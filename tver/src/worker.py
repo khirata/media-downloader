@@ -19,16 +19,16 @@ sqs = boto3.client('sqs', region_name=AWS_REGION)
 def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
-def record_tver(url):
+def record_video(url):
     """
-    Downloads TVer URL via yt-dlp.
+    Downloads video URL via yt-dlp.
     """
-    # Simple yt-dlp invocation for TVer
+    # Simple yt-dlp invocation
     cmd = ["yt-dlp", "-o", os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s"), url]
     cmd.extend(GLOBAL_YT_DLP_ARGS)
 
     try:
-        log(f"Downloading TVer URL: {url}")
+        log(f"Downloading Video URL: {url}")
         subprocess.run(cmd, check=True)
         log(f"Successfully downloaded {url}")
         return True
@@ -50,7 +50,7 @@ def process_message(msg_body):
         log("Missing url in message")
         return False
 
-    return record_tver(url)
+    return record_video(url)
 
 def main():
     if not SQS_QUEUE_URL:
@@ -81,6 +81,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         url = sys.argv[1]
         log(f"Manual override: downloading {url}")
-        record_tver(url)
+        record_video(url)
     else:
         main()

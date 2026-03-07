@@ -1,15 +1,15 @@
 # Serverless Media Downloader ([日本語](./README_ja.md))
 
-This repository contains an automated, event-driven media recording system designed to download streaming media (such as Radiko radio programs and TVer videos), stitch them together if necessary, and ultimately save them locally or upload them securely to Google Drive.
+This repository contains an automated, event-driven media recording system designed to download streaming media (such as Radiko radio programs and TVer/YouTube videos), stitch them together if necessary, and ultimately save them locally or upload them securely to Google Drive.
 
 It is structured as a monorepo housing several interconnected components:
 
 ## 🗂️ Projects
 
 * **[chrome-extension](./chrome-extension/)**: A Chrome extension that captures URLs from the browser and sends them to the API Gateway.
-* **[api-gw](./api-gw/)**: An AWS API Gateway and Lambda function that validates incoming requests and dispatches them as JSON payloads to a central AWS SNS topic. It acts as the traffic router (e.g., routing `radiko.jp` URLs to the Radiko SQS queue, and `tver.jp` URLs to the TVer SQS queue).
+* **[api-gw](./api-gw/)**: An AWS API Gateway and Lambda function that validates incoming requests and dispatches them as JSON payloads to a central AWS SNS topic. It acts as the traffic router (e.g., routing `radiko.jp` URLs to the Radiko SQS queue, and `tver.jp` or `youtube.com` URLs to the TVer/Video SQS queue).
 * **[radiko](./radiko/)**: A Dockerized Python worker that continuously polls its dedicated SQS queue for Radiko URLs. It uses `yt-dlp` to download the segments, `ffmpeg` to concatenate them seamlessly, and the Google Drive API to upload the final `.m4a` file.
-* **[tver](./tver/)**: A lightweight Dockerized Python worker that polls its SQS queue for TVer URLs, using `yt-dlp` to download the videos locally.
+* **[tver](./tver/)**: A lightweight Dockerized Python worker that polls its SQS queue for Video (TVer/YouTube) URLs, using `yt-dlp` to download the videos locally.
 
 ## ⚙️ General Requirements
 
@@ -35,7 +35,7 @@ You will need to run Terraform in three separate directories, in this specific o
 
 1.  **API Gateway (`api-gw/`)**: Creates the main SNS dispatcher topic and publisher credentials.
 2.  **Radiko (`radiko/`)**: Creates the Radiko SQS queue and worker credentials.
-3.  **TVer (`tver/`)**: Creates the TVer SQS queue and worker credentials.
+3.  **TVer (`tver/`)**: Creates the TVer/Video SQS queue and worker credentials.
 
 For each directory:
 ```bash
@@ -77,7 +77,7 @@ cd radiko
 docker compose up -d --build
 ```
 
-**TVer Worker:**
+**Video (TVer/YouTube) Worker:**
 ```bash
 cd ../tver
 docker compose up -d --build
@@ -100,7 +100,7 @@ aws sns publish \
   --message "{\"type\": \"radiko\", \"station_id\": \"FMJ\", \"start_times\": [\"202602221300\", \"202602221400\"], \"description\": \"JUNK伊集院\"}"
 ```
 
-**TVer Example:**
+**Video (TVer/YouTube) Example:**
 ```bash
 aws sns publish \
   --profile media-downloader-publisher \

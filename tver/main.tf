@@ -60,10 +60,10 @@ resource "aws_sns_topic_subscription" "tver_subscription" {
   endpoint  = aws_sqs_queue.tver_queue.arn
   raw_message_delivery = true
 
-  # ONLY accept messages where the JSON body 'type' is 'tver'
+  # ONLY accept messages where the JSON body 'type' is 'tver' or 'youtube'
   filter_policy_scope = "MessageBody"
   filter_policy = jsonencode({
-    type = ["tver"]
+    type = ["tver", "youtube"]
   })
 }
 

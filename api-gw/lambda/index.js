@@ -49,6 +49,7 @@ exports.handler = async (event) => {
         const publishResults = [];
         const radikoUrls = [];
         const tverUrls = [];
+        const youtubeUrls = [];
         const unhandledUrls = [];
 
         // Dispatch based on URL
@@ -57,6 +58,8 @@ exports.handler = async (event) => {
                 radikoUrls.push(u);
             } else if (u.includes('tver.jp')) {
                 tverUrls.push(u);
+            } else if (u.includes('youtube.com') || u.includes('youtu.be')) {
+                youtubeUrls.push(u);
             } else {
                 unhandledUrls.push(u);
             }
@@ -73,6 +76,12 @@ exports.handler = async (event) => {
         // Process TVer URLs
         if (tverUrls.length > 0) {
             const results = await handleTverUrls(tverUrls, topicArn, snsClient);
+            publishResults.push(...results);
+        }
+
+        // Process YouTube URLs
+        if (youtubeUrls.length > 0) {
+            const results = await handleYoutubeUrls(youtubeUrls, topicArn, snsClient);
             publishResults.push(...results);
         }
 
@@ -189,6 +198,36 @@ async function handleTverUrls(urls, topicArn, snsClient) {
 
         publishResults.push({
             type: 'tver',
+            url: u,
+            messageId: result.MessageId
+        });
+    }
+
+    return publishResults;
+}
+
+async function handleYoutubeUrls(urls, topicArn, snsClient) {
+    const publishResults = [];
+
+    // YouTube publishes each URL independently
+    for (const u of urls) {
+        const payload = {
+            type: 'youtube',
+            url: u
+        };
+
+        const params = {
+            TopicArn: topicArn,
+            Message: JSON.stringify(payload),
+            Subject: 'YouTube Recording Scheduled'
+        };
+
+        const command = new PublishCommand(params);
+        const result = await snsClient.send(command);
+        console.log(`Successfully published YouTube message ID: ${result.MessageId} for URL ${u}`);
+
+        publishResults.push({
+            type: 'youtube',
             url: u,
             messageId: result.MessageId
         });

@@ -1,15 +1,15 @@
 # サーバーレスメディアダウンローダー ([English](./README.md))
 
-このリポジトリは、ストリーミングメディア（Radiko のラジオ番組や TVer の動画など）をダウンロードし、必要に応じて結合し、最終的にローカルに保存するか Google ドライブへ安全にアップロードするための、自動化されたイベント駆動型の録画・録音システムです。
+このリポジトリは、ストリーミングメディア（Radiko のラジオ番組や TVer・YouTube の動画など）をダウンロードし、必要に応じて結合し、最終的にローカルに保存するか Google ドライブへ安全にアップロードするための、自動化されたイベント駆動型の録画・録音システムです。
 
 複数のコンポーネントが連携するモノレポ構成となっています：
 
 ## 🗂️ プロジェクト構成
 
 * **[chrome-extension](./chrome-extension/)**: ブラウザから URL をキャプチャし、API ゲートウェイに送信する Chrome 拡張機能。
-* **[api-gw](./api-gw/)**: 着信リクエストを検証し、中央の AWS SNS トピックへ JSON ペイロードとしてディスパッチする AWS API Gateway と Lambda 関数。トラフィックルーターとして機能します（例: `radiko.jp` URL は Radiko SQS キューへ、`tver.jp` URL は TVer SQS キューへルーティング）。
+* **[api-gw](./api-gw/)**: 着信リクエストを検証し、中央の AWS SNS トピックへ JSON ペイロードとしてディスパッチする AWS API Gateway と Lambda 関数。トラフィックルーターとして機能します（例: `radiko.jp` URL は Radiko SQS キューへ、`tver.jp` や `youtube.com` URL は TVer/動画 SQS キューへルーティング）。
 * **[radiko](./radiko/)**: Radiko 専用の SQS キューを継続的にポーリングする Docker 化された Python ワーカ。`yt-dlp` でセグメントをダウンロードし、`ffmpeg` でシームレスに結合し、Google ドライブ API で最終的な `.m4a` ファイルをアップロードします。
-* **[tver](./tver/)**: TVer 専用の SQS キューを継続的にポーリングする軽量な Docker 化された Python ワーカ。`yt-dlp` を使用して動画をローカルにダウンロードします。
+* **[tver](./tver/)**: TVer や YouTube 用の SQS キューを継続的にポーリングする軽量な Docker 化された Python ワーカ。`yt-dlp` を使用して動画をローカルにダウンロードします。
 
 ## ⚙️ 要件
 
@@ -31,7 +31,7 @@
 
 1. **API Gateway (`api-gw/`)**: メインの SNS ディスパッチャートピックとパブリッシャー（発行者）認証情報を作成します。
 2. **Radiko (`radiko/`)**: Radiko 用 SQS キューとワーカ認証情報を作成します。
-3. **TVer (`tver/`)**: TVer 用 SQS キューとワーカ認証情報を作成します。
+3. **TVer (`tver/`)**: 動画（TVer/YouTube）用 SQS キューとワーカ認証情報を作成します。
 
 各ディレクトリで以下のコマンドを実行します：
 ```bash
@@ -73,7 +73,7 @@ cd radiko
 docker compose up -d --build
 ```
 
-**TVer ワーカ:**
+**動画 (TVer/YouTube) ワーカ:**
 ```bash
 cd ../tver
 docker compose up -d --build
@@ -96,7 +96,7 @@ aws sns publish \
   --message "{\"type\": \"radiko\", \"station_id\": \"FMJ\", \"start_times\": [\"202602221300\", \"202602221400\"], \"description\": \"JUNK伊集院\"}"
 ```
 
-**TVer の例:**
+**動画 (TVer/YouTube) の例:**
 ```bash
 aws sns publish \
   --profile media-downloader-publisher \
