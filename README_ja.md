@@ -104,6 +104,12 @@ cd ..
 
 Terraform の実行が完了すると、必要な IAM アクセスキー、SQS キューの URL、および SNS トピックの ARN が出力されます。これらの値は、手順 3 の `.env` ファイル設定で使用するため控えておいてください。
 
+> [!NOTE]
+> `AWS_SECRET_ACCESS_KEY` などの出力がコンソール上で `<sensitive>` として隠されている場合、以下のコマンドを実行することで正確な値を表示できます：
+> ```bash
+> terraform output -json
+> ```
+
 ### 2. Google Drive API の設定 (Radiko のみ)
 Google Drive を設定しない場合 (手順3で `GDRIVE_FOLDER_ID` を空のままにした場合)、Radiko ワーカはアップロードを自動的にスキップし、代わりにホストマシンの `/tmp` ディレクトリに最終的な `.m4a` ファイルをローカル保存します。
 

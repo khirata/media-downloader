@@ -108,6 +108,12 @@ cd ..
 
 Terraform will output the necessary IAM access keys, SQS Queue URLs, and the SNS Topic ARN. Keep these values handy for the `.env` file configuration in Step 3.
 
+> [!NOTE]
+> If any outputs (such as the `AWS_SECRET_ACCESS_KEY`) are marked as `<sensitive>` and hidden in your console output, you can reveal the exact values by running:
+> ```bash
+> terraform output -json
+> ```
+
 ### 2. Google Drive API Configuration (Radiko Only)
 If you do **not** configure Google Drive (by leaving `GDRIVE_FOLDER_ID` empty in step 3), the Radiko worker will automatically skip uploading and instead save the final `.m4a` files locally to your host machine's `/tmp` directory.
 
