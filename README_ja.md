@@ -60,7 +60,7 @@ graph TD
 
 ## 🗂️ プロジェクト構成
 
-* **[chrome-extension](./chrome-extension/)**: ブラウザから URL をキャプチャし、API ゲートウェイに送信する Chrome 拡張機能。
+* **[url-publisher-extension](./url-publisher-extension/)**: ブラウザから URL をキャプチャし、API ゲートウェイに送信する Chrome 拡張機能。
 * **[api-gw](./api-gw/)**: 着信リクエストを検証し、中央の AWS SNS トピックへ JSON ペイロードとしてディスパッチする AWS API Gateway と Lambda 関数。トラフィックルーターとして機能します（例: `radiko.jp` URL は Radiko SQS キューへ、`tver.jp` や `youtube.com` URL は TVer/動画 SQS キューへルーティング）。
 * **[radiko](./radiko/)**: Radiko 専用の SQS キューを継続的にポーリングする Docker 化された Python ワーカ。`yt-dlp` でセグメントをダウンロードし、`ffmpeg` でシームレスに結合し、Google ドライブ API で最終的な `.m4a` ファイルをアップロードします。
 * **[tver](./tver/)**: TVer や YouTube 用の SQS キューを継続的にポーリングする軽量な Docker 化された Python ワーカ。`yt-dlp` を使用して動画をローカルにダウンロードします。
