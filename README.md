@@ -133,6 +133,60 @@ cp tver-downloader/.env.example tver-downloader/.env
 
 Edit both `.env` files and fill in your newly provisioned AWS credentials, SQS Queue URLs, and Google Drive folder ID (if applicable).
 
+#### Post-Processing Hooks (Optional)
+If you run external scripts that need to be triggered after a download finishes, you can set `CREATE_READY_FILE=true` in either `.env` file. This tells the worker to generate a `<media_file_name>.ready` file inside `/app/downloads` immediately after the media file is fully processed and `chowned`.
+
+<details>
+<summary><b>Example: Debian Systemd Watcher</b></summary>
+
+You can set up a lightweight background service on your Debian/Ubuntu host that watches the downloads directory for `.ready` files using `inotify-tools`, and triggers custom processing (like moving files, encoding audio, or scanning Plex).
+
+**1. Install `inotify-tools`:**
+```bash
+sudo apt update && sudo apt install -y inotify-tools
+```
+
+**2. Create the processor script (`/usr/local/bin/process_downloads.sh`):**
+```bash
+#!/bin/bash
+DOWNLOAD_DIR="/path/to/media-downloader/downloads"
+
+inotifywait -m -e create --format '%w%f' "$DOWNLOAD_DIR" | while read NEW_FILE
+do
+    if [[ "$NEW_FILE" == *.ready ]]; then
+        MEDIA_FILE="${NEW_FILE%.ready}"
+        if [ -f "$MEDIA_FILE" ]; then
+            echo "[$(date)] Processing: $MEDIA_FILE"
+            
+            # --- ADD YOUR CUSTOM COMMANDS HERE ---
+            # e.g., mv "$MEDIA_FILE" /mnt/nas/
+            
+            rm -f "$NEW_FILE"
+        fi
+    fi
+done
+```
+*(Make it executable with `sudo chmod +x /usr/local/bin/process_downloads.sh`)*
+
+**3. Create the Systemd Service (`/etc/systemd/system/media-processor.service`):**
+```ini
+[Unit]
+Description=Media Downloader Ready File Processor
+
+[Service]
+Type=simple
+User=your_linux_username
+ExecStart=/usr/local/bin/process_downloads.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start with: `sudo systemctl daemon-reload && sudo systemctl enable --now media-processor`
+</details>
+
 ### 4. Deploy the Workers
 You can start the workers independently by navigating to their directories:
 

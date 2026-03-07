@@ -129,6 +129,60 @@ cp tver-downloader/.env.example tver-downloader/.env
 
 2つの `.env` ファイルをそれぞれ編集し、新しくプロビジョニングした AWS 認証情報、該当する SQS キュー URL、および Google Drive フォルダ ID (該当する場合) を入力します。
 
+#### ポストプロセス（後処理）フック (オプション)
+ダウンロード終了後に外部スクリプトをトリガーしたい場合は、各 `.env` ファイルで `CREATE_READY_FILE=true` と設定してください。これにより、ワーカはメディアファイルの処理と `chown` 権限付与が完了した直後に、`/app/downloads` ディレクトリ内に `<media_file_name>.ready` という空のマーカーファイルを生成します。
+
+<details>
+<summary><b>例: Debian Systemd ウォッチャー</b></summary>
+
+Debian / Ubuntu ホスト上で `inotify-tools` を使用してダウンロードディレクトリを監視し、`.ready` ファイルが作成された瞬間にカスタム処理 (ファイルの移動、Plex スキャンなど) をトリガーする軽量なバックグラウンドサービスを構築できます。
+
+**1. `inotify-tools` のインストール:**
+```bash
+sudo apt update && sudo apt install -y inotify-tools
+```
+
+**2. プロセッサスクリプトの作成 (`/usr/local/bin/process_downloads.sh`):**
+```bash
+#!/bin/bash
+DOWNLOAD_DIR="/path/to/media-downloader/downloads"
+
+inotifywait -m -e create --format '%w%f' "$DOWNLOAD_DIR" | while read NEW_FILE
+do
+    if [[ "$NEW_FILE" == *.ready ]]; then
+        MEDIA_FILE="${NEW_FILE%.ready}"
+        if [ -f "$MEDIA_FILE" ]; then
+            echo "[$(date)] 処理中: $MEDIA_FILE"
+            
+            # --- ここにカスタムコマンドを追加します ---
+            # 例: mv "$MEDIA_FILE" /mnt/nas/
+            
+            rm -f "$NEW_FILE"
+        fi
+    fi
+done
+```
+*(実行権限を付与します: `sudo chmod +x /usr/local/bin/process_downloads.sh`)*
+
+**3. Systemd サービスの作成 (`/etc/systemd/system/media-processor.service`):**
+```ini
+[Unit]
+Description=Media Downloader Ready File Processor
+
+[Service]
+Type=simple
+User=your_linux_username
+ExecStart=/usr/local/bin/process_downloads.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+有効化して開始するには: `sudo systemctl daemon-reload && sudo systemctl enable --now media-processor`
+</details>
+
 ### 4. ワーカのデプロイ
 それぞれのディレクトリに移動して、ワーカを個別に開始できます：
 
