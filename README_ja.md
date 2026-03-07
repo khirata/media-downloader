@@ -160,22 +160,20 @@ docker compose up -d --build
 URL を配信（パブリッシュ）する前に、拡張機能が AWS バックエンドと通信できるように設定する必要があります。
 1. Chrome ツールバーの URL Publisher 拡張機能アイコンをクリックします。
 2. 拡張機能ポップアップの右上にある **⚙️ 設定（Settings）** 歯車アイコンをクリックします。
-3. 手順 1 の `api-gw` Terraform デプロイ時の出力結果を使用して、以下のフィールドに入力します：
+3. 手順 1 の `api-gw` Terraform デプロイ時の 2 つの出力結果と、独自に設定したシークレットを使用して、以下のフィールドに入力します：
    - **API Gateway Endpoint URL**: `api_endpoint` の URL を貼り付けます。
    - **API Key**: `api_key` の文字列を貼り付けます。
-   - **Custom Secret**: `terraform.tfvars` で指定した `secret_token` を入力します。
+   - **Custom Secret**: `terraform.tfvars` ファイルで指定した `secret_token` を入力します。
 4. **Save Settings（設定を保存）** をクリックします。
 5. これで準備完了です！サポートされている動画/ラジオのページに移動し、拡張機能を開いて **Publish（配信）** をクリックしてください。
 
 ### 6. タスクのトリガーとスケジューリング (HTTP API)
 URL を配信する主要な方法は Chrome 拡張機能経由で API ゲートウェイにリクエストを送ることですが、標準的な HTTP POST リクエストを使用して、タスクを手動でトリガーしたり `cron` でスケジュールしたりすることも可能です。
 
-ローカルマシンに AWS IAM 認証情報を保存する必要がないため、**このアプローチが推奨されます。**
-
-`api-gw` の Terraform 出力から、以下の 3 つの値が必要です：
-1. `api_endpoint`
-2. `api_key`
-3. `secret_token`
+`api-gw` の Terraform 出力から 2 つの値と、独自に設定したシークレットトークンが必要です：
+1. `api_endpoint` (Terraform 出力)
+2. `api_key` (Terraform 出力)
+3. `secret_token` (`terraform.tfvars` ファイルから)
 
 **手動トリガー (Radiko の例):**
 ```bash

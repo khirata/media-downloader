@@ -164,10 +164,10 @@ The included Chrome Extension is the primary way to quickly capture and dispatch
 Before you can publish URLs, you must point the extension to your AWS backend.
 1. Click the URL Publisher extension icon in your Chrome toolbar.
 2. Click the **⚙️ Settings** gear icon in the top right corner of the extension popup.
-3. Fill in the fields using the outputs from the `api-gw` Terraform deployment in Step 1:
+3. Fill in the fields using the two outputs from the `api-gw` Terraform deployment in Step 1, along with your custom secret:
    - **API Gateway Endpoint URL**: Paste the `api_endpoint` URL.
    - **API Key**: Paste the `api_key` string.
-   - **Custom Secret**: Enter your chosen `secret_token` from `terraform.tfvars`.
+   - **Custom Secret**: Enter your chosen `secret_token` from your `terraform.tfvars` file.
 4. Click **Save Settings**.
 5. You are ready to go! Navigate to a supported video/radio page, open the extension, and click **Publish**.
 
@@ -176,10 +176,10 @@ While the primary method of dispatching URLs is via the Chrome extension interfa
 
 This is the recommended approach as it avoids needing to store any AWS IAM credentials on your local machine.
 
-You will need three values from your `api-gw` Terraform output:
-1. `api_endpoint`
-2. `api_key`
-3. `secret_token`
+You will need two values from your `api-gw` Terraform output, plus your secret token:
+1. `api_endpoint` (Terraform output)
+2. `api_key` (Terraform output)
+3. `secret_token` (From your `terraform.tfvars` file)
 
 **Manual Trigger (Radiko Example):**
 ```bash
