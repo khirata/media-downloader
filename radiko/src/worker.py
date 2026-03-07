@@ -137,6 +137,16 @@ def record_radiko(station_id, start_times, yt_dlp_args_ovr=None, description=Non
         return True
     elif upload_status == "SKIPPED":
         log(f"Upload skipped. Keeping final file locally at {final_file_path}.")
+        
+        puid = os.environ.get('PUID', '').strip()
+        pgid = os.environ.get('PGID', '').strip()
+        if puid.isdigit() and pgid.isdigit():
+            try:
+                os.chown(final_file_path, int(puid), int(pgid))
+                log(f"Changed ownership of {final_file_path} to {puid}:{pgid}")
+            except Exception as e:
+                log(f"Failed to change ownership: {e}")
+
         log("Cleaning up intermediate files...")
         for df in downloaded_files:
             if os.path.exists(df) and df != final_file_path:

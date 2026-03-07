@@ -114,10 +114,13 @@ aws sns publish \
 
 各ワーカの `.env` ファイルに `YT_DLP_ARGS` 変数を設定することで、そのワーカのすべてのダウンロードに共通して適用されるオプション（同時接続数、プロキシ、プレミアムアカウントの認証情報など）を指定できます。
 ```env
-# Download Storage Configuration
-# Set this to save media to a specific folder on your host machine.
-# If left blank or commented out, downloads default to the host's /tmp directory.
+# ダウンロード保存先の設定
+# ホストマシン上の特定のフォルダにメディアを保存する場合に設定します。
+# 空白またはコメントアウトした場合、デフォルトでホストの /tmp ディレクトリに保存されます。
 DOWNLOAD_DIR=/path/to/your/custom/folder
 
+# ファイルの所有権 (オプション)
+# ホストに保存する場合、ダウンロードしたファイルにアクセスできるようにユーザーIDとグループIDを設定します。
+# これらはホストマシンで `id -u` および `id -g` を実行することで確認できます。
 YT_DLP_ARGS="-N 10 --extractor-args rajiko:premium_user=YOUR_USERNAME;premium_pass=YOUR_PASSWORD"
 ```

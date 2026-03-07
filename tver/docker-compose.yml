@@ -12,6 +12,10 @@ services:
       - AWS_REGION=${AWS_REGION:-ap-northeast-1}
       - SQS_QUEUE_URL=${SQS_QUEUE_URL}
 
+      # File Ownership
+      - PUID=${PUID:-}
+      - PGID=${PGID:-}
+
       # System Configuration
       - TZ=${TZ:-Asia/Tokyo}
 

@@ -123,5 +123,11 @@ You can set a `YT_DLP_ARGS` variable in your respective `.env` files to apply gl
 # If left blank or commented out, downloads default to the host's /tmp directory.
 DOWNLOAD_DIR=/path/to/your/custom/folder
 
+# File Ownership (Optional)
+# If saving to the host, set your user and group IDs so the downloaded files are accessible.
+# You can find these by running `id -u` and `id -g` on your host machine.
+PUID=1000
+PGID=1000
+
 YT_DLP_ARGS="-N 10 --extractor-args rajiko:premium_user=YOUR_USERNAME;premium_pass=YOUR_PASSWORD"
 ```
