@@ -17,7 +17,7 @@ graph TD
 
     subgraph Clients ["📤 Clients (Publishers)"]
         direction LR
-        EXT["Chrome Extension<br/>(chrome-extension/)"]:::client
+        EXT["Chrome Extension<br/>(url-publisher-extension/)"]:::client
         CLI["AWS CLI / Scripts<br/>(Local Terminal)"]:::client
     end
 
@@ -161,7 +161,7 @@ Since it is not published to the Chrome Web Store, you must load it locally.
 2. Navigate to `chrome://extensions/` in your address bar.
 3. Turn on the **Developer mode** toggle in the top-right corner.
 4. Click the **Load unpacked** button in the top-left menu.
-5. Select the `chrome-extension/extension` folder located inside this project directory.
+5. Select the `url-publisher-extension` folder located inside this project directory.
 6. The "URL Publisher" extension should now appear. Pin it to your toolbar for easy access.
 
 **Configuration:**
