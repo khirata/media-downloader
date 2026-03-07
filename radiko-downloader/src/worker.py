@@ -142,24 +142,25 @@ def record_radiko(station_id, start_times, yt_dlp_args_ovr=None, description=Non
         puid = os.environ.get('PUID', '').strip()
         pgid = os.environ.get('PGID', '').strip()
         
-        files_to_chown = [final_file_path]
-        
+        # 1. Chown the main file first so downstream scripts don't hit permission errors
+        if puid.isdigit() and pgid.isdigit():
+            try:
+                os.chown(final_file_path, int(puid), int(pgid))
+                log(f"Changed ownership of {final_file_path} to {puid}:{pgid}")
+            except Exception as e:
+                log(f"Failed to change ownership: {e}")
+                
+        # 2. THEN create the ready marker
         if CREATE_READY_FILE:
             ready_file = f"{final_file_path}.ready"
             try:
                 open(ready_file, 'w').close()
-                files_to_chown.append(ready_file)
                 log(f"Created ready marker file: {ready_file}")
+                # Chown the ready marker itself to match
+                if puid.isdigit() and pgid.isdigit():
+                    os.chown(ready_file, int(puid), int(pgid))
             except Exception as e:
-                log(f"Failed to create ready marker file: {e}")
-
-        if puid.isdigit() and pgid.isdigit():
-            for filepath in files_to_chown:
-                try:
-                    os.chown(filepath, int(puid), int(pgid))
-                    log(f"Changed ownership of {filepath} to {puid}:{pgid}")
-                except Exception as e:
-                    log(f"Failed to change ownership of {filepath}: {e}")
+                log(f"Failed to create or chown ready marker file: {e}")
 
         log("Cleaning up intermediate files...")
         for df in downloaded_files:

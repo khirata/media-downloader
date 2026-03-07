@@ -49,24 +49,26 @@ def record_video(url):
             # Change ownership for all generated files (video, audio, subs, etc.)
             for downloaded_file in written_files:
                 if downloaded_file.strip() and os.path.exists(downloaded_file):
-                    files_to_chown = [downloaded_file]
                     
+                    # 1. Chown the main file first
+                    if puid.isdigit() and pgid.isdigit():
+                        try:
+                            os.chown(downloaded_file, int(puid), int(pgid))
+                            log(f"Changed ownership of {downloaded_file} to {puid}:{pgid}")
+                        except Exception as e:
+                            log(f"Failed to change ownership of {downloaded_file}: {e}")
+                    
+                    # 2. THEN create the ready marker
                     if CREATE_READY_FILE:
                         ready_file = f"{downloaded_file}.ready"
                         try:
                             open(ready_file, 'w').close()
-                            files_to_chown.append(ready_file)
                             log(f"Created ready marker file: {ready_file}")
+                            # Chown the ready marker itself to match
+                            if puid.isdigit() and pgid.isdigit():
+                                os.chown(ready_file, int(puid), int(pgid))
                         except Exception as e:
-                            log(f"Failed to create ready marker file: {e}")
-
-                    if puid.isdigit() and pgid.isdigit():
-                        for filepath in files_to_chown:
-                            try:
-                                os.chown(filepath, int(puid), int(pgid))
-                                log(f"Changed ownership of {filepath} to {puid}:{pgid}")
-                            except Exception as e:
-                                log(f"Failed to change ownership of {filepath}: {e}")
+                            log(f"Failed to create or chown ready marker file: {e}")
             
             # Clean up out temp log
             os.remove(filepath_log)
