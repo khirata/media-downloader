@@ -19,6 +19,7 @@ SQS_QUEUE_URL = os.environ.get('SQS_QUEUE_URL')
 AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-1')
 DOWNLOAD_DIR = "/app/downloads"
 GDRIVE_FOLDER_ID = os.environ.get('GDRIVE_FOLDER_ID')
+CREATE_READY_FILE = os.environ.get('CREATE_READY_FILE', 'false').lower() == 'true'
 YT_DLP_ARGS_STR = os.environ.get('YT_DLP_ARGS', '')
 GLOBAL_YT_DLP_ARGS = shlex.split(YT_DLP_ARGS_STR) if YT_DLP_ARGS_STR else []
 
@@ -140,12 +141,25 @@ def record_radiko(station_id, start_times, yt_dlp_args_ovr=None, description=Non
         
         puid = os.environ.get('PUID', '').strip()
         pgid = os.environ.get('PGID', '').strip()
-        if puid.isdigit() and pgid.isdigit():
+        
+        files_to_chown = [final_file_path]
+        
+        if CREATE_READY_FILE:
+            ready_file = f"{final_file_path}.ready"
             try:
-                os.chown(final_file_path, int(puid), int(pgid))
-                log(f"Changed ownership of {final_file_path} to {puid}:{pgid}")
+                open(ready_file, 'w').close()
+                files_to_chown.append(ready_file)
+                log(f"Created ready marker file: {ready_file}")
             except Exception as e:
-                log(f"Failed to change ownership: {e}")
+                log(f"Failed to create ready marker file: {e}")
+
+        if puid.isdigit() and pgid.isdigit():
+            for filepath in files_to_chown:
+                try:
+                    os.chown(filepath, int(puid), int(pgid))
+                    log(f"Changed ownership of {filepath} to {puid}:{pgid}")
+                except Exception as e:
+                    log(f"Failed to change ownership of {filepath}: {e}")
 
         log("Cleaning up intermediate files...")
         for df in downloaded_files:

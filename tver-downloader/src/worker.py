@@ -12,6 +12,7 @@ import tempfile
 SQS_QUEUE_URL = os.environ.get('SQS_QUEUE_URL')
 AWS_REGION = os.environ.get('AWS_REGION', 'ap-northeast-1')
 DOWNLOAD_DIR = "/app/downloads"
+CREATE_READY_FILE = os.environ.get('CREATE_READY_FILE', 'false').lower() == 'true'
 YT_DLP_ARGS_STR = os.environ.get('YT_DLP_ARGS', '')
 GLOBAL_YT_DLP_ARGS = shlex.split(YT_DLP_ARGS_STR) if YT_DLP_ARGS_STR else []
 
@@ -48,12 +49,24 @@ def record_video(url):
             # Change ownership for all generated files (video, audio, subs, etc.)
             for downloaded_file in written_files:
                 if downloaded_file.strip() and os.path.exists(downloaded_file):
-                    if puid.isdigit() and pgid.isdigit():
+                    files_to_chown = [downloaded_file]
+                    
+                    if CREATE_READY_FILE:
+                        ready_file = f"{downloaded_file}.ready"
                         try:
-                            os.chown(downloaded_file, int(puid), int(pgid))
-                            log(f"Changed ownership of {downloaded_file} to {puid}:{pgid}")
+                            open(ready_file, 'w').close()
+                            files_to_chown.append(ready_file)
+                            log(f"Created ready marker file: {ready_file}")
                         except Exception as e:
-                            log(f"Failed to change ownership of {downloaded_file}: {e}")
+                            log(f"Failed to create ready marker file: {e}")
+
+                    if puid.isdigit() and pgid.isdigit():
+                        for filepath in files_to_chown:
+                            try:
+                                os.chown(filepath, int(puid), int(pgid))
+                                log(f"Changed ownership of {filepath} to {puid}:{pgid}")
+                            except Exception as e:
+                                log(f"Failed to change ownership of {filepath}: {e}")
             
             # Clean up out temp log
             os.remove(filepath_log)
