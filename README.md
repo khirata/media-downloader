@@ -149,7 +149,29 @@ docker compose up -d --build
 ```
 The containers will now run silently in the background, polling their respective SQS queues for recording tasks.
 
-### 5. Triggering & Scheduling Recordings (HTTP API)
+### 5. Deploy & Configure the Chrome Extension
+The included Chrome Extension is the primary way to quickly capture and dispatch Media URLs. Since it is not published to the Chrome Web Store, you must load it locally.
+
+**Installation:**
+1. Open Google Chrome.
+2. Navigate to `chrome://extensions/` in your address bar.
+3. Turn on the **Developer mode** toggle in the top-right corner.
+4. Click the **Load unpacked** button in the top-left menu.
+5. Select the `chrome-extension/extension` folder located inside this project directory.
+6. The "URL Publisher" extension should now appear. Pin it to your toolbar for easy access.
+
+**Configuration:**
+Before you can publish URLs, you must point the extension to your AWS backend.
+1. Click the URL Publisher extension icon in your Chrome toolbar.
+2. Click the **⚙️ Settings** gear icon in the top right corner of the extension popup.
+3. Fill in the fields using the outputs from the `api-gw` Terraform deployment in Step 1:
+   - **API Gateway Endpoint URL**: Paste the `api_endpoint` URL.
+   - **API Key**: Paste the `api_key` string.
+   - **Custom Secret**: Enter your chosen `secret_token` from `terraform.tfvars`.
+4. Click **Save Settings**.
+5. You are ready to go! Navigate to a supported video/radio page, open the extension, and click **Publish**.
+
+### 6. Triggering & Scheduling Recordings (HTTP API)
 While the primary method of dispatching URLs is via the Chrome extension interfacing with the API Gateway, you can still trigger recordings manually or schedule them via `cron` using standard HTTP POST requests. 
 
 This is the recommended approach as it avoids needing to store any AWS IAM credentials on your local machine.
