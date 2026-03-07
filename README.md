@@ -27,13 +27,13 @@ graph TD
     end
 
     subgraph Queues ["📥 Message Queues"]
-        SQS_R["Radiko SQS Queue<br/>(radiko/)"]:::queue
-        SQS_T["Video SQS Queue<br/>(tver/)"]:::queue
+        SQS_R["Radiko SQS Queue<br/>(radiko-downloader/)"]:::queue
+        SQS_T["Video SQS Queue<br/>(tver-downloader/)"]:::queue
     end
 
     subgraph Workers ["⚙️ Downloaders"]
-        WORK_R["Radiko Python Worker<br/>(radiko/)"]:::worker
-        WORK_T["TVer/YouTube Python Worker<br/>(tver/)"]:::worker
+        WORK_R["Radiko Python Worker<br/>(radiko-downloader/)"]:::worker
+        WORK_T["TVer/YouTube Python Worker<br/>(tver-downloader/)"]:::worker
     end
     
     STORAGE[("Local Storage /<br/>Google Drive")]:::storage
@@ -62,8 +62,8 @@ graph TD
 
 * **[url-publisher-extension](./url-publisher-extension/)**: A Chrome extension that captures URLs from the browser and sends them to the API Gateway.
 * **[api-gw](./api-gw/)**: An AWS API Gateway and Lambda function that validates incoming requests and dispatches them as JSON payloads to a central AWS SNS topic. It acts as the traffic router (e.g., routing `radiko.jp` URLs to the Radiko SQS queue, and `tver.jp` or `youtube.com` URLs to the TVer/Video SQS queue).
-* **[radiko](./radiko/)**: A Dockerized Python worker that continuously polls its dedicated SQS queue for Radiko URLs. It uses `yt-dlp` to download the segments, `ffmpeg` to concatenate them seamlessly, and the Google Drive API to upload the final `.m4a` file.
-* **[tver](./tver/)**: A lightweight Dockerized Python worker that polls its SQS queue for Video (TVer/YouTube) URLs, using `yt-dlp` to download the videos locally.
+* **[radiko-downloader](./radiko-downloader/)**: A Dockerized Python worker that continuously polls its dedicated SQS queue for Radiko URLs. It uses `yt-dlp` to download the segments, `ffmpeg` to concatenate them seamlessly, and the Google Drive API to upload the final `.m4a` file.
+* **[tver-downloader](./tver-downloader/)**: A lightweight Dockerized Python worker that polls its SQS queue for Video (TVer/YouTube) URLs, using `yt-dlp` to download the videos locally.
 
 ## ⚙️ General Requirements
 
@@ -94,8 +94,8 @@ Edit the newly created `terraform.tfvars` file and update all missing values lik
 Next, you will need to run Terraform in three separate directories, in this specific order:
 
 1.  **API Gateway (`api-gw/`)**: Creates the main SNS dispatcher topic and publisher credentials.
-2.  **Radiko (`radiko/`)**: Creates the Radiko SQS queue and worker credentials.
-3.  **TVer (`tver/`)**: Creates the TVer/Video SQS queue and worker credentials.
+2.  **Radiko (`radiko-downloader/`)**: Creates the Radiko SQS queue and worker credentials.
+3.  **TVer (`tver-downloader/`)**: Creates the TVer/Video SQS queue and worker credentials.
 
 For each directory:
 ```bash
@@ -124,11 +124,11 @@ If you want to use Google Drive:
 4. Run the local authentication script to generate your `token.json` file. Place `token.json` in the `radiko/` folder. *(Note: Do not include `client_secret.json` in the runtime environment).*
 
 ### 3. Configure Docker Environment Variables
-You must create a `.env` file in **both** the `radiko/` and `tver/` directories. Start by copying the examples:
+You must create a `.env` file in **both** the `radiko-downloader/` and `tver-downloader/` directories. Start by copying the examples:
 
 ```bash
-cp radiko/.env.example radiko/.env
-cp tver/.env.example tver/.env
+cp radiko-downloader/.env.example radiko-downloader/.env
+cp tver-downloader/.env.example tver-downloader/.env
 ```
 
 Edit both `.env` files and fill in your newly provisioned AWS credentials, SQS Queue URLs, and Google Drive folder ID (if applicable).
@@ -138,13 +138,13 @@ You can start the workers independently by navigating to their directories:
 
 **Radiko Worker:**
 ```bash
-cd radiko
+cd radiko-downloader
 docker compose up -d --build
 ```
 
 **Video (TVer/YouTube) Worker:**
 ```bash
-cd ../tver
+cd ../tver-downloader
 docker compose up -d --build
 ```
 The containers will now run silently in the background, polling their respective SQS queues for recording tasks.

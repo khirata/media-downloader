@@ -27,13 +27,13 @@ graph TD
     end
 
     subgraph Queues ["📥 メッセージキュー"]
-        SQS_R["Radiko SQS キュー<br/>(radiko/)"]:::queue
-        SQS_T["動画 SQS キュー<br/>(tver/)"]:::queue
+        SQS_R["Radiko SQS キュー<br/>(radiko-downloader/)"]:::queue
+        SQS_T["動画 SQS キュー<br/>(tver-downloader/)"]:::queue
     end
 
     subgraph Workers ["⚙️ ダウンローダー"]
-        WORK_R["Radiko Python ワーカ<br/>(radiko/)"]:::worker
-        WORK_T["TVer/YouTube Python ワーカ<br/>(tver/)"]:::worker
+        WORK_R["Radiko Python ワーカ<br/>(radiko-downloader/)"]:::worker
+        WORK_T["TVer/YouTube Python ワーカ<br/>(tver-downloader/)"]:::worker
     end
     
     STORAGE[("ローカルストレージ /<br/>Google ドライブ")]:::storage
@@ -62,8 +62,8 @@ graph TD
 
 * **[url-publisher-extension](./url-publisher-extension/)**: ブラウザから URL をキャプチャし、API ゲートウェイに送信する Chrome 拡張機能。
 * **[api-gw](./api-gw/)**: 着信リクエストを検証し、中央の AWS SNS トピックへ JSON ペイロードとしてディスパッチする AWS API Gateway と Lambda 関数。トラフィックルーターとして機能します（例: `radiko.jp` URL は Radiko SQS キューへ、`tver.jp` や `youtube.com` URL は TVer/動画 SQS キューへルーティング）。
-* **[radiko](./radiko/)**: Radiko 専用の SQS キューを継続的にポーリングする Docker 化された Python ワーカ。`yt-dlp` でセグメントをダウンロードし、`ffmpeg` でシームレスに結合し、Google ドライブ API で最終的な `.m4a` ファイルをアップロードします。
-* **[tver](./tver/)**: TVer や YouTube 用の SQS キューを継続的にポーリングする軽量な Docker 化された Python ワーカ。`yt-dlp` を使用して動画をローカルにダウンロードします。
+* **[radiko-downloader](./radiko-downloader/)**: Radiko 専用の SQS キューを継続的にポーリングする Docker 化された Python ワーカ。`yt-dlp` でセグメントをダウンロードし、`ffmpeg` でシームレスに結合し、Google ドライブ API で最終的な `.m4a` ファイルをアップロードします。
+* **[tver-downloader](./tver-downloader/)**: TVer や YouTube 用の SQS キューを継続的にポーリングする軽量な Docker 化された Python ワーカ。`yt-dlp` を使用して動画をローカルにダウンロードします。
 
 ## ⚙️ 要件
 
@@ -90,8 +90,8 @@ cp terraform.tfvars.example terraform.tfvars
 次に、以下の3つのディレクトリで、**この順番通り**に Terraform を実行する必要があります：
 
 1. **API Gateway (`api-gw/`)**: メインの SNS ディスパッチャートピックとパブリッシャー（発行者）認証情報を作成します。
-2. **Radiko (`radiko/`)**: Radiko 用 SQS キューとワーカ認証情報を作成します。
-3. **TVer (`tver/`)**: 動画（TVer/YouTube）用 SQS キューとワーカ認証情報を作成します。
+2. **Radiko (`radiko-downloader/`)**: Radiko 用 SQS キューとワーカ認証情報を作成します。
+3. **TVer (`tver-downloader/`)**: 動画（TVer/YouTube）用 SQS キューとワーカ認証情報を作成します。
 
 各ディレクトリで以下のコマンドを実行します：
 ```bash
@@ -120,11 +120,11 @@ Google Drive を使用したい場合：
 4. ローカルの認証スクリプトを実行して `token.json` ファイルを生成し、`radiko/` フォルダ内に配置します。*(注: `client_secret.json` は実行環境には含めないでください)。*
 
 ### 3. Docker 環境変数の設定
-`radiko/` および `tver/` ディレクトリの**それぞれ**に `.env` ファイルを作成する必要があります。まずは example ファイルをコピーします：
+`radiko-downloader/` および `tver-downloader/` ディレクトリの**それぞれ**に `.env` ファイルを作成する必要があります。まずは example ファイルをコピーします：
 
 ```bash
-cp radiko/.env.example radiko/.env
-cp tver/.env.example tver/.env
+cp radiko-downloader/.env.example radiko-downloader/.env
+cp tver-downloader/.env.example tver-downloader/.env
 ```
 
 2つの `.env` ファイルをそれぞれ編集し、新しくプロビジョニングした AWS 認証情報、該当する SQS キュー URL、および Google Drive フォルダ ID (該当する場合) を入力します。
@@ -134,13 +134,13 @@ cp tver/.env.example tver/.env
 
 **Radiko ワーカ:**
 ```bash
-cd radiko
+cd radiko-downloader
 docker compose up -d --build
 ```
 
 **動画 (TVer/YouTube) ワーカ:**
 ```bash
-cd ../tver
+cd ../tver-downloader
 docker compose up -d --build
 ```
 これでコンテナはバックグラウンドで静かに動作し、それぞれの SQS キューに録画・録音タスクが届くのを待機します。
