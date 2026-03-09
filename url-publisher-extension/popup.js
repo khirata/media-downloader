@@ -196,7 +196,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function getSettings() {
     return new Promise((resolve) => {
-      chrome.storage.sync.get(['endpoint', 'apiKey', 'secret'], (result) => {
+      chrome.storage.sync.get(['endpoint', 'apiKey'], (result) => {
         resolve(result);
       });
     });
@@ -217,9 +217,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (settings.apiKey) {
         headers['x-api-key'] = settings.apiKey;
-      }
-      if (settings.secret) {
-        headers['x-api-secret'] = settings.secret; // Custom header if needed
       }
 
       console.log('Publishing to', settings.endpoint, payload);

@@ -72,11 +72,7 @@ To run this project, you need the following infrastructure and tools:
 * **Terraform** (To automatically provision the required AWS infrastructure)
 * **AWS Account** (For SNS Topics, SQS Queues, and IAM Users)
 * **Google Account** (Destination for saving Radiko audio files. You can skip this and save locally. A **Google Workspace** account is recommended for avoiding 7-day token expirations.)
-*   **Docker & Docker Compose** (Host machine, e.g., Ubuntu/Linux)
-*   **Terraform** (To automatically provision the required AWS infrastructure)
-*   **AWS Account** (For SNS Topics, SQS Queues, and IAM Users)
-*   **Google Account** (Destination for saving Radiko audio files. You can skip this and save locally. A **Google Workspace** account is recommended for avoiding 7-day token expirations.)
-*   **AWS CLI v2** (For sending manual recording requests from the host machine)
+* **AWS CLI v2** (For sending manual recording requests from the host machine)
 
 ---
 
@@ -89,7 +85,7 @@ Before running Terraform, you must create a centralized configuration file in th
 ```bash
 cp terraform.tfvars.example terraform.tfvars
 ```
-Edit the newly created `terraform.tfvars` file and update all missing values like `aws_region`, your custom `secret_token`, and the `sns_topic_arn` (which you will get after deploying `api-gw`).
+Edit the newly created `terraform.tfvars` file and update `aws_region` and the `sns_topic_arn` (which you will get after deploying `api-gw`).
 
 Next, you will need to run Terraform in three separate directories, in this specific order:
 
@@ -206,7 +202,7 @@ The containers will now run silently in the background, polling their respective
 ### 5. Deploy & Configure the Chrome Extension
 The included Chrome Extension is the primary way to quickly capture and dispatch Media URLs. 
 
-> **💡 Note:** This extension is built as a general-purpose HTTP POST client. While pre-configured instructions are provided for this project's dispatcher, you can point it at **any** API Gateway or compatible webhook that accepts `{"urls": ["..."]}` and identical headers (`x-api-key`, `x-api-secret`).
+> **💡 Note:** This extension is built as a general-purpose HTTP POST client. While pre-configured instructions are provided for this project's dispatcher, you can point it at **any** API Gateway or compatible webhook that accepts `{"urls": ["..."]}` and an `x-api-key` header.
 
 Since it is not published to the Chrome Web Store, you must load it locally.
 
@@ -222,10 +218,9 @@ Since it is not published to the Chrome Web Store, you must load it locally.
 Before you can publish URLs, you must point the extension to your AWS backend.
 1. Click the URL Publisher extension icon in your Chrome toolbar.
 2. Click the **⚙️ Settings** gear icon in the top right corner of the extension popup.
-3. Fill in the fields using the two outputs from the `api-gw` Terraform deployment in Step 1, along with your custom secret:
+3. Fill in the fields using the outputs from the `api-gw` Terraform deployment in Step 1:
    - **API Gateway Endpoint URL**: Paste the `api_endpoint` URL.
    - **API Key**: Paste the `api_key` string.
-   - **Custom Secret**: Enter your chosen `secret_token` from your `terraform.tfvars` file.
 4. Click **Save Settings**.
 5. You are ready to go! Navigate to a supported video/radio page, open the extension, and click **Publish**.
 
@@ -234,17 +229,15 @@ While the primary method of dispatching URLs is via the Chrome extension interfa
 
 This is the recommended approach as it avoids needing to store any AWS IAM credentials on your local machine.
 
-You will need two values from your `api-gw` Terraform output, plus your secret token:
+You will need two values from your `api-gw` Terraform output:
 1. `api_endpoint` (Terraform output)
 2. `api_key` (Terraform output)
-3. `secret_token` (From your `terraform.tfvars` file)
 
 **Manual Trigger (Radiko Example):**
 ```bash
 curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
   -H "Content-Type: application/json" \
   -H "x-api-key: YOUR_API_KEY" \
-  -H "x-api-secret: YOUR_SECRET_TOKEN" \
   -d '{"urls": ["https://radiko.jp/#!/ts/FMJ/20260301130000"]}'
 ```
 
@@ -253,7 +246,6 @@ curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
 curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
   -H "Content-Type: application/json" \
   -H "x-api-key: YOUR_API_KEY" \
-  -H "x-api-secret: YOUR_SECRET_TOKEN" \
   -d '{"urls": ["https://tver.jp/episodes/ex4mple"]}'
 ```
 
@@ -265,7 +257,6 @@ For automatic, recurring recordings (like a weekly radio show), simply add the e
 55 12 * * 0 curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
   -H "Content-Type: application/json" \
   -H "x-api-key: YOUR_API_KEY" \
-  -H "x-api-secret: YOUR_SECRET_TOKEN" \
   -d '{"urls": ["https://radiko.jp/#!/ts/FMJ/20260301130000"]}' >> /tmp/radiko-cron.log 2>&1
 ```
 

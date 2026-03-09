@@ -34,13 +34,6 @@ variable "aws_region" {
   default     = "us-west-2"
 }
 
-variable "secret_token" {
-  description = "Custom secret token matched against the x-api-secret header"
-  type        = string
-  default     = "default_secret_token"
-  sensitive   = true
-}
-
 # ==========================================
 # SNS Topic (The Master Dispatcher)
 # ==========================================
@@ -106,7 +99,6 @@ resource "aws_lambda_function" "publisher" {
   environment {
     variables = {
       SNS_TOPIC_ARN = aws_sns_topic.dispatcher.arn
-      SECRET_TOKEN  = var.secret_token
     }
   }
 }
@@ -165,7 +157,7 @@ resource "aws_api_gateway_integration_response" "options_integration_response" {
   status_code = aws_api_gateway_method_response.options_response.status_code
 
   response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Api-Secret'"
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
     "method.response.header.Access-Control-Allow-Methods" = "'OPTIONS,POST'"
     "method.response.header.Access-Control-Allow-Origin"  = "'*'"
   }
@@ -222,14 +214,15 @@ resource "aws_api_gateway_usage_plan" "usage_plan" {
     stage  = aws_api_gateway_stage.prod.stage_name
   }
 
+  # 100/day: ~50 TVer/YouTube + ~20 Radiko, rounded up (combined; API Gateway quota is per key, not per type)
   quota_settings {
-    limit  = 1000
+    limit  = 100
     period = "DAY"
   }
 
   throttle_settings {
-    burst_limit = 50
-    rate_limit  = 100
+    burst_limit = 5
+    rate_limit  = 2
   }
 }
 

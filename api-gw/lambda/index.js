@@ -15,20 +15,6 @@ exports.handler = async (event) => {
             };
         }
 
-        // Validate Secret Token (if provided in environment)
-        const expectedSecret = process.env.SECRET_TOKEN;
-        if (expectedSecret && expectedSecret !== 'default_secret_token') {
-            const providedSecret = event.headers['x-api-secret'] || event.headers['X-Api-Secret'];
-            if (!providedSecret || providedSecret !== expectedSecret) {
-                console.warn('Unauthorized: Invalid secret token.');
-                return {
-                    statusCode: 401,
-                    headers: getCorsHeaders(),
-                    body: JSON.stringify({ message: 'Unauthorized' })
-                };
-            }
-        }
-
         const { url, urls, description } = JSON.parse(event.body || '{}');
 
         let urlList = [];
@@ -120,7 +106,7 @@ exports.handler = async (event) => {
 function getCorsHeaders() {
     return {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Api-Secret',
+        'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
         'Access-Control-Allow-Methods': 'OPTIONS,POST'
     };
 }
