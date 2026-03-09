@@ -60,27 +60,24 @@ def upload_to_gdrive(local_file_path, file_name):
         log(f"Google Drive Upload Error: {e}")
         return False
 
-def record_radiko(station_id, start_times, yt_dlp_args_ovr=None, description=None):
+def record_radiko(station_id, start_times, description=None):
     """
     Downloads Radiko segments based solely on start_times.
     yt-dlp automatically handles downloading until the program's natural end.
     """
     downloaded_files = []
-    
-    yt_dlp_args_ovr = yt_dlp_args_ovr or []
-    
+
     # 1. Download all segments
     for i, start_time in enumerate(start_times):
         url = f"https://radiko.jp/#!/ts/{station_id}/{start_time}00"
         file_prefix = f"part{i}-{start_time}-{station_id}"
         output_path_template = os.path.join(DOWNLOAD_DIR, f"{file_prefix}.%(ext)s")
-        
+
         # Base command, omitting --ignore-config to allow yt-dlp.conf overrides
         cmd = ["yt-dlp", "--no-part", "-o", output_path_template, url]
-        
-        # Append global (env) args, then message-specific args
+
+        # Append global (env) args only — never args from SQS message bodies
         cmd.extend(GLOBAL_YT_DLP_ARGS)
-        cmd.extend(yt_dlp_args_ovr)
 
         try:
             log(f"Downloading segment {i+1}/{len(start_times)}: {start_time}")
@@ -181,9 +178,8 @@ def process_message(msg_body):
 
     station_id = data.get('station_id')
     start_times = data.get('start_times', [])
-    yt_dlp_args_ovr = data.get('yt_dlp_args', [])
     description = data.get('description')
-    
+
     # Fallback for older single-segment messages
     if not start_times and data.get('start_time'):
         start_times = [data.get('start_time')]
@@ -192,7 +188,7 @@ def process_message(msg_body):
         log("Missing station_id or start_times in message")
         return False
 
-    return record_radiko(station_id, start_times, yt_dlp_args_ovr, description)
+    return record_radiko(station_id, start_times, description)
 
 def main():
     if not SQS_QUEUE_URL:
