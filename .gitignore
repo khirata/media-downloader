@@ -91,3 +91,8 @@ terraform.rc
 
 # Ignore lock file
 .terraform.lock.hcl
+
+# =========================
+# 7. Claude
+# =========================
+CLAUDE.md
