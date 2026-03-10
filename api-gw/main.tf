@@ -89,18 +89,24 @@ resource "aws_iam_role_policy" "lambda_sns_policy" {
 
 # Lambda Function
 resource "aws_lambda_function" "publisher" {
-  filename         = data.archive_file.lambda_zip.output_path
-  function_name    = "url-publisher-function"
-  role             = aws_iam_role.lambda_role.arn
-  handler          = "index.handler"
-  runtime          = "nodejs20.x"
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  filename                       = data.archive_file.lambda_zip.output_path
+  function_name                  = "url-publisher-function"
+  role                           = aws_iam_role.lambda_role.arn
+  handler                        = "index.handler"
+  runtime                        = "nodejs20.x"
+  source_code_hash               = data.archive_file.lambda_zip.output_base64sha256
+  reserved_concurrent_executions = 5
 
   environment {
     variables = {
       SNS_TOPIC_ARN = aws_sns_topic.dispatcher.arn
     }
   }
+}
+
+resource "aws_cloudwatch_log_group" "publisher_logs" {
+  name              = "/aws/lambda/${aws_lambda_function.publisher.function_name}"
+  retention_in_days = 30
 }
 
 # API Gateway REST API

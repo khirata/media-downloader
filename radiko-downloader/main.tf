@@ -89,6 +89,20 @@ resource "aws_sqs_queue" "radiko_dlq" {
   name = "${local.kebab_name}-radiko-dlq"
 }
 
+resource "aws_cloudwatch_metric_alarm" "radiko_dlq_alarm" {
+  alarm_name          = "${local.kebab_name}-radiko-dlq-not-empty"
+  alarm_description   = "Radiko DLQ has messages — processing failures need investigation"
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions          = { QueueName = aws_sqs_queue.radiko_dlq.name }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+}
+
 
 # ==========================================
 # Worker Users and Credentials

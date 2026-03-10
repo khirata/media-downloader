@@ -37,6 +37,20 @@ resource "aws_sqs_queue" "tver_dlq" {
   name = "${local.kebab_name}-tver-dlq"
 }
 
+resource "aws_cloudwatch_metric_alarm" "tver_dlq_alarm" {
+  alarm_name          = "${local.kebab_name}-tver-dlq-not-empty"
+  alarm_description   = "TVer DLQ has messages — processing failures need investigation"
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions          = { QueueName = aws_sqs_queue.tver_dlq.name }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+}
+
 # ==========================================
 # TVer Queue & Routing
 # ==========================================

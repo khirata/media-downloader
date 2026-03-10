@@ -6,6 +6,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 
 def main():
+    if not os.path.exists('client_secret.json'):
+        print("Error: client_secret.json not found. Download it from Google Cloud Console.")
+        return
+
     flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', SCOPES)
     # This opens a web browser for you to log in
     creds = flow.run_local_server(port=0)

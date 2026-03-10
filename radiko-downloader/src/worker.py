@@ -1,6 +1,7 @@
 import os
 import json
 import subprocess
+import tempfile
 import time
 import boto3
 from datetime import datetime
@@ -41,8 +42,11 @@ def upload_to_gdrive(local_file_path, file_name):
         log("Refreshing Google Drive token...")
         try:
             creds.refresh(Request())
-            with open(token_path, 'w') as token:
-                token.write(creds.to_json())
+            tmp_dir = os.path.dirname(os.path.abspath(token_path))
+            with tempfile.NamedTemporaryFile('w', dir=tmp_dir, delete=False, suffix='.tmp') as tmp:
+                tmp.write(creds.to_json())
+                tmp_path = tmp.name
+            os.replace(tmp_path, token_path)
         except Exception as e:
             log(f"Failed to refresh token: {e}")
             return False
@@ -151,7 +155,8 @@ def record_radiko(station_id, start_times, description=None):
         if CREATE_READY_FILE:
             ready_file = f"{final_file_path}.ready"
             try:
-                open(ready_file, 'w').close()
+                with open(ready_file, 'w'):
+                    pass
                 log(f"Created ready marker file: {ready_file}")
                 # Chown the ready marker itself to match
                 if puid.isdigit() and pgid.isdigit():
@@ -203,8 +208,8 @@ def main():
                 QueueUrl=SQS_QUEUE_URL, MaxNumberOfMessages=1,
                 WaitTimeSeconds=20, VisibilityTimeout=3600
             )
-            log(f"Messages: {response}")
             if 'Messages' in response:
+                log(f"Received message: {response}")
                 for message in response['Messages']:
                     receipt_handle = message['ReceiptHandle']
                     success = process_message(message['Body'])

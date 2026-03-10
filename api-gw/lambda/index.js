@@ -32,6 +32,14 @@ exports.handler = async (event) => {
             };
         }
 
+        if (urlList.length > 50) {
+            return {
+                statusCode: 400,
+                headers: getCorsHeaders(),
+                body: JSON.stringify({ message: 'Too many URLs in a single request (max 50)' })
+            };
+        }
+
         const publishResults = [];
         const radikoUrls = [];
         const tverUrls = [];

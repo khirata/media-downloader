@@ -95,6 +95,10 @@ def process_message(msg_body):
         log("Missing url in message")
         return False
 
+    if not url.startswith(('https://', 'http://')):
+        log(f"Rejected URL with invalid scheme: {url}")
+        return False
+
     return record_video(url)
 
 def main():
@@ -110,8 +114,8 @@ def main():
                 QueueUrl=SQS_QUEUE_URL, MaxNumberOfMessages=1,
                 WaitTimeSeconds=20, VisibilityTimeout=3600
             )
-            log(f"Messages: {response}")
             if 'Messages' in response:
+                log(f"Received message: {response}")
                 for message in response['Messages']:
                     receipt_handle = message['ReceiptHandle']
                     success = process_message(message['Body'])
