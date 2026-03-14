@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.MediaDownloaderPublisher" parent="Theme.Material3.DayNight.NoActionBar" />
+
+    <!-- Dialog-style theme for ShareActivity so it floats over the calling app -->
+    <style name="Theme.MediaDownloaderPublisher.Dialog" parent="Theme.Material3.DayNight.Dialog">
+        <item name="android:windowMinWidthMajor">90%</item>
+        <item name="android:windowMinWidthMinor">90%</item>
+    </style>
+</resources>

@@ -1,0 +1,6 @@
+# User-specific / machine-specific — do not commit
+/shelf/
+/workspace.xml
+/caches/
+/deploymentTargetSelector.xml
+/migrations.xml

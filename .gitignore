@@ -49,6 +49,7 @@ ehthumbs.db
 Thumbs.db
 .vscode/
 .idea/
+!android-publisher/.idea/
 *.swp
 
 # =========================

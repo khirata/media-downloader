@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Media Downloader</string>
+    <string name="settings_title">Settings</string>
+    <string name="endpoint_hint">API Endpoint URL</string>
+    <string name="api_key_hint">API Key (x-api-key)</string>
+    <string name="description_hint">Description (optional)</string>
+    <string name="publish">Publish</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="settings">Settings</string>
+    <string name="settings_saved">Settings saved</string>
+    <string name="publishing">Publishing…</string>
+    <string name="publish_success">Published successfully</string>
+    <string name="publish_failed">Failed: %s</string>
+    <string name="no_url_found">No URL found in shared content</string>
+    <string name="configure_endpoint">Please configure the API endpoint first</string>
+    <string name="endpoint_required">Endpoint URL is required</string>
+    <string name="endpoint_invalid">Endpoint must start with http:// or https://</string>
+</resources>
