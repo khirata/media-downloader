@@ -169,18 +169,91 @@ def record_radiko(station_id, start_times, description=None):
 
     return False
 
-def process_message(msg_body):
-    """Parses SQS JSON. Expects raw delivery: {"station_id": "FMJ", "start_times": ["..."]}"""
+def download_podcast(url, description=None):
+    """Downloads a Radiko podcast episode directly via yt-dlp."""
+    # Use a temp prefix so we can find the output file afterwards
+    episode_id = url.rstrip('/').split('/')[-1]
+    file_prefix = f"podcast-{episode_id}"
+    output_path_template = os.path.join(DOWNLOAD_DIR, f"{file_prefix}.%(ext)s")
+
+    cmd = ["yt-dlp", "--no-part", "-o", output_path_template, url]
+    cmd.extend(GLOBAL_YT_DLP_ARGS)
+
     try:
-        # Just load it directly. No envelope to unwrap!
+        log(f"Downloading podcast episode: {url}")
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        log(f"Error downloading podcast {url}: {e}")
+        return False
+
+    files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{file_prefix}.*"))
+    if not files:
+        log(f"Could not find output file for podcast {episode_id}")
+        return False
+
+    downloaded_file = files[0]
+    ext = downloaded_file.split('.')[-1]
+
+    if description:
+        final_file_name = f"{episode_id}-{description}.{ext}"
+    else:
+        final_file_name = f"{episode_id}.{ext}"
+
+    final_file_path = os.path.join(DOWNLOAD_DIR, final_file_name)
+    os.rename(downloaded_file, final_file_path)
+
+    upload_status = upload_to_gdrive(final_file_path, final_file_name)
+
+    if upload_status is True:
+        log("Cleaning up local file after upload...")
+        if os.path.exists(final_file_path):
+            os.remove(final_file_path)
+        return True
+    elif upload_status == "SKIPPED":
+        log(f"Upload skipped. Keeping file locally at {final_file_path}.")
+
+        puid = os.environ.get('PUID', '').strip()
+        pgid = os.environ.get('PGID', '').strip()
+
+        if puid.isdigit() and pgid.isdigit():
+            try:
+                os.chown(final_file_path, int(puid), int(pgid))
+                log(f"Changed ownership of {final_file_path} to {puid}:{pgid}")
+            except Exception as e:
+                log(f"Failed to change ownership: {e}")
+
+        if CREATE_READY_FILE:
+            ready_file = f"{final_file_path}.ready"
+            try:
+                with open(ready_file, 'w'):
+                    pass
+                log(f"Created ready marker file: {ready_file}")
+                if puid.isdigit() and pgid.isdigit():
+                    os.chown(ready_file, int(puid), int(pgid))
+            except Exception as e:
+                log(f"Failed to create or chown ready marker file: {e}")
+
+        return True
+
+    return False
+
+
+def process_message(msg_body):
+    """Parses SQS JSON. Expects raw delivery."""
+    try:
         data = json.loads(msg_body)
     except json.JSONDecodeError:
         log("Invalid JSON received")
         return False
 
+    description = data.get('description')
+
+    # Podcast: {"type": "radiko", "url": "https://radiko.jp/podcast/episodes/..."}
+    if data.get('url'):
+        return download_podcast(data['url'], description)
+
     station_id = data.get('station_id')
     start_times = data.get('start_times', [])
-    description = data.get('description')
 
     # Fallback for older single-segment messages
     if not start_times and data.get('start_time'):

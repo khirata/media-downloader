@@ -121,10 +121,30 @@ function getCorsHeaders() {
 
 async function handleRadikoUrls(urls, description, topicArn, snsClient) {
     const radikoRegex = /^https?:\/\/radiko\.jp\/#!\/ts\/([A-Za-z0-9_-]+)\/(\d{14})/;
+    const podcastRegex = /^https?:\/\/radiko\.jp\/podcast\/episodes\//;
     const stations = {};
     const publishResults = [];
 
     for (const u of urls) {
+        if (podcastRegex.test(u)) {
+            // Podcast URLs are published individually with the URL directly
+            const payload = { type: 'radiko', url: u };
+            if (description) payload.description = description;
+
+            const params = {
+                TopicArn: topicArn,
+                Message: JSON.stringify(payload),
+                Subject: 'Radiko Podcast Download Scheduled'
+            };
+
+            const command = new PublishCommand(params);
+            const result = await snsClient.send(command);
+            console.log(`Successfully published Radiko podcast message ID: ${result.MessageId} for URL ${u}`);
+
+            publishResults.push({ type: 'radiko_podcast', url: u, messageId: result.MessageId });
+            continue;
+        }
+
         const match = u.match(radikoRegex);
         if (match) {
             const stationId = match[1];
