@@ -1,7 +1,6 @@
 import os
 import json
 import subprocess
-import tempfile
 import time
 import boto3
 from datetime import datetime
@@ -42,11 +41,8 @@ def upload_to_gdrive(local_file_path, file_name):
         log("Refreshing Google Drive token...")
         try:
             creds.refresh(Request())
-            tmp_dir = os.path.dirname(os.path.abspath(token_path))
-            with tempfile.NamedTemporaryFile('w', dir=tmp_dir, delete=False, suffix='.tmp') as tmp:
-                tmp.write(creds.to_json())
-                tmp_path = tmp.name
-            os.replace(tmp_path, token_path)
+            with open(token_path, 'w') as f:
+                f.write(creds.to_json())
         except Exception as e:
             log(f"Failed to refresh token: {e}")
             return False
