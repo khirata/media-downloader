@@ -8,7 +8,7 @@ This approach is simple and robust.
 
 ## 1. Setup
 
-Ensure the script is executable and you have your `.env` configured.
+Ensure the script is executable:
 
 ```bash
 cd radiko-downloader
