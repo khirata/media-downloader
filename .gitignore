@@ -1,7 +1,7 @@
 # =========================
 # 1. Secrets & Configs (CRITICAL)
 # =========================
-.env
+.*env
 client_secret.json
 token.json
 

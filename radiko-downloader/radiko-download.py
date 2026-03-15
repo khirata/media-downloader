@@ -13,14 +13,22 @@ def log(msg):
     print(f"[{now_str}] {msg}")
 
 def load_env():
-    # Load .schedule.env file from the current directory
-    env_path = os.path.join(os.path.dirname(__file__), '.schedule.env')
-    if os.path.exists(env_path):
-        with open(env_path, 'r') as f:
-            for line in f:
-                if line.strip() and not line.startswith('#'):
-                    key, val = line.strip().split('=', 1)
-                    os.environ[key] = val.strip(' "\'')
+    # 1. Check same location as the script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    env_paths = [
+        os.path.join(script_dir, '.radiko-download.env'),
+        os.path.expanduser('~/.config/.radiko-download.env')
+    ]
+
+    for env_path in env_paths:
+        if os.path.exists(env_path):
+            log(f"Loading config from {env_path}")
+            with open(env_path, 'r') as f:
+                for line in f:
+                    if line.strip() and not line.startswith('#'):
+                        key, val = line.strip().split('=', 1)
+                        os.environ[key] = val.strip(' "\'')
+            return # Stop after the first found file
 
 
 
@@ -37,7 +45,7 @@ def main():
     api_key = os.environ.get('MEDIA_RECORDER_API_KEY')
 
     if not endpoint or not api_key:
-        log("Error: MEDIA_RECORDER_API_ENDPOINT or MEDIA_RECORDER_API_KEY not set in .schedule.env")
+        log("Error: MEDIA_RECORDER_API_ENDPOINT or MEDIA_RECORDER_API_KEY not set. Please create .radiko-download.env")
         sys.exit(1)
 
     urls = []
