@@ -18,7 +18,6 @@ graph TD
     subgraph Clients ["📤 クライアント (送信側)"]
         direction LR
         EXT["Chrome 拡張機能<br/>(url-publisher-extension/)"]:::client
-        CLI["AWS CLI / スクリプト<br/>(ローカルターミナル)"]:::client
     end
 
     subgraph Dispatcher ["🚦 中央ルーター (api-gw/)"]
@@ -40,7 +39,6 @@ graph TD
 
     %% Client flows
     EXT -->|"HTTP POST (URL)"| API
-    CLI -->|"HTTP POST (curl)"| API
     API -->|"AWS SDK Publish<br/>{type: '...'} "| SNS
 
     %% Dispatcher routing based on message attributes/body
@@ -72,7 +70,6 @@ graph TD
 * **Terraform** (必要な AWS インフラストラクチャを自動的にプロビジョニングするため)
 * **AWS アカウント** (SNS トピック、SQS キュー、IAM ユーザー用)
 * **Google アカウント** (Radiko のオーディオファイルの保存先用。ホストにローカル保存する場合は不要です。7日ごとのトークン有効期限切れを避けるため、**Google Workspace** アカウントを推奨します。)
-* **AWS CLI v2** (ホストマシンから手動で録音リクエストを送信するため)
 
 ---
 

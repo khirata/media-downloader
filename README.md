@@ -18,7 +18,6 @@ graph TD
     subgraph Clients ["📤 Clients (Publishers)"]
         direction LR
         EXT["Chrome Extension<br/>(url-publisher-extension/)"]:::client
-        CLI["AWS CLI / Scripts<br/>(Local Terminal)"]:::client
     end
 
     subgraph Dispatcher ["🚦 Central Router (api-gw/)"]
@@ -40,7 +39,6 @@ graph TD
 
     %% Client flows
     EXT -->|"HTTP POST (URL)"| API
-    CLI -->|"HTTP POST (curl)"| API
     API -->|"AWS SDK Publish<br/>{type: '...'} "| SNS
 
     %% Dispatcher routing based on message attributes/body
@@ -72,7 +70,6 @@ To run this project, you need the following infrastructure and tools:
 * **Terraform** (To automatically provision the required AWS infrastructure)
 * **AWS Account** (For SNS Topics, SQS Queues, and IAM Users)
 * **Google Account** (Destination for saving Radiko audio files. You can skip this and save locally. A **Google Workspace** account is recommended for avoiding 7-day token expirations.)
-* **AWS CLI v2** (For sending manual recording requests from the host machine)
 
 ---
 
