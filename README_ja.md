@@ -258,6 +258,8 @@ curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
 #### Cron による自動化
 ラジオのレギュラー番組のように、定期的な自動録画・録音をおこなうには、上記の `curl` コマンドをそのままシステムの `crontab` に追加するだけです。
 
+Radiko の録音については、複数セグメントの cron エントリを簡単に組み立てられる専用ヘルパースクリプト（`radiko-download.py`）を同梱しています。詳しくは [`radiko-downloader/SCHEDULING_ja.md`](./radiko-downloader/SCHEDULING_ja.md) を参照してください。
+
 **Cron ジョブの例 (毎週日曜日の 12:55 に実行):**
 ```bash
 55 12 * * 0 curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \

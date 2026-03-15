@@ -251,6 +251,8 @@ curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
 #### Automating with Cron
 For automatic, recurring recordings (like a weekly radio show), simply add the exact `curl` command above to your system's `crontab`.
 
+For Radiko specifically, the included [`radiko-downloader/SCHEDULING.md`](./radiko-downloader/SCHEDULING.md) covers a dedicated helper script (`radiko-download.py`) that simplifies building cron entries for multi-segment programs.
+
 **Example Cron Job (Runs every Sunday at 12:55 PM):**
 ```bash
 55 12 * * 0 curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
