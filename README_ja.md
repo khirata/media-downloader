@@ -18,6 +18,7 @@ graph TD
     subgraph Clients ["📤 クライアント (送信側)"]
         direction LR
         EXT["Chrome 拡張機能<br/>(url-publisher-extension/)"]:::client
+        CURL["スクリプト / curl<br/>(ローカルターミナル)"]:::client
     end
 
     subgraph Dispatcher ["🚦 中央ルーター (api-gw/)"]
@@ -39,6 +40,7 @@ graph TD
 
     %% Client flows
     EXT -->|"HTTP POST (URL)"| API
+    CURL -->|"HTTP POST (curl)"| API
     API -->|"AWS SDK Publish<br/>{type: '...'} "| SNS
 
     %% Dispatcher routing based on message attributes/body
