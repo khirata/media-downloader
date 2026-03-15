@@ -15,7 +15,8 @@ cd radiko-downloader
 chmod +x download-radiko.py
 ```
 
-Your `.env` file in the same directory must contain:
+Your `.download-radiko.env` file in the same directory must contain your API credentials. You can find these values in the `Outputs` section printed to the terminal after running `terraform apply` in the `api-gw` directory:
+
 ```ini
 MEDIA_RECORDER_API_ENDPOINT="https://your-api-id.execute-api.us-west-2.amazonaws.com/prod/record"
 MEDIA_RECORDER_API_KEY="your-api-key"

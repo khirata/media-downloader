@@ -8,9 +8,13 @@ from urllib.error import URLError, HTTPError
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+def log(msg):
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{now_str}] {msg}")
+
 def load_env():
-    # Load .env file from the current directory
-    env_path = os.path.join(os.path.dirname(__file__), '.env')
+    # Load .schedule.env file from the current directory
+    env_path = os.path.join(os.path.dirname(__file__), '.schedule.env')
     if os.path.exists(env_path):
         with open(env_path, 'r') as f:
             for line in f:
@@ -33,7 +37,7 @@ def main():
     api_key = os.environ.get('MEDIA_RECORDER_API_KEY')
 
     if not endpoint or not api_key:
-        print("Error: MEDIA_RECORDER_API_ENDPOINT or MEDIA_RECORDER_API_KEY not set in .env")
+        log("Error: MEDIA_RECORDER_API_ENDPOINT or MEDIA_RECORDER_API_KEY not set in .schedule.env")
         sys.exit(1)
 
     urls = []
@@ -48,8 +52,8 @@ def main():
 
     payload_bytes = json.dumps(payload).encode('utf-8')
 
-    print(f"Sending payload to {endpoint} :")
-    print(json.dumps(payload, indent=2))
+    log(f"Sending payload to {endpoint} :")
+    log(json.dumps(payload, indent=2))
 
     req = urllib.request.Request(str(endpoint), data=payload_bytes, method='POST', headers={
         'Content-Type': 'application/json',
@@ -58,12 +62,12 @@ def main():
 
     try:
         with urllib.request.urlopen(req) as response:
-            print(f"Success! HTTP Status: {response.status}")
+            log(f"Success! HTTP Status: {response.status}")
     except HTTPError as e:
-        print(f"API Error: HTTP {e.code} - {e.reason}")
+        log(f"API Error: HTTP {e.code} - {e.reason}")
         sys.exit(1)
     except URLError as e:
-        print(f"Network Error: Failed to reach API - {e.reason}")
+        log(f"Network Error: Failed to reach API - {e.reason}")
         sys.exit(1)
 
 if __name__ == "__main__":
