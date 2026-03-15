@@ -62,7 +62,7 @@ graph TD
 
 * **[url-publisher-extension](./url-publisher-extension/)**: A Chrome extension that captures URLs from the browser and sends them to the API Gateway.
 * **[api-gw](./api-gw/)**: An AWS API Gateway and Lambda function that validates incoming requests and dispatches them as JSON payloads to a central AWS SNS topic. It acts as the traffic router (e.g., routing `radiko.jp` URLs to the Radiko SQS queue, and `tver.jp` or `youtube.com` URLs to the TVer/Video SQS queue).
-* **[radiko-downloader](./radiko-downloader/)**: A Dockerized Python worker that continuously polls its dedicated SQS queue for Radiko URLs. It uses `yt-dlp` to download the segments, `ffmpeg` to concatenate them seamlessly, and the Google Drive API to upload the final `.m4a` file.
+* **[radiko-downloader](./radiko-downloader/)**: A Dockerized Python worker that continuously polls its dedicated SQS queue for Radiko URLs. It uses `yt-dlp` to download the segments, `ffmpeg` to concatenate them seamlessly, and the Google Drive API to upload the final `.m4a` file. For scheduling recurring recordings via `cron`, see [radiko-downloader/SCHEDULING.md](./radiko-downloader/SCHEDULING.md).
 * **[tver-downloader](./tver-downloader/)**: A lightweight Dockerized Python worker that polls its SQS queue for Video (TVer/YouTube) URLs, using `yt-dlp` to download the videos locally.
 
 ## ⚙️ General Requirements

@@ -1,4 +1,4 @@
-# Simple Crontab Scheduling for Radiko Downloads
+# Radiko Download Script and Scheduling ([日本語](./SCHEDULING_ja.md))
 
 This guide explains how to use the `radiko-download.py` script and a standard Linux `crontab` to schedule your Radiko time-free recordings. 
 
