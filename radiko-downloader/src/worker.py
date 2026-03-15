@@ -61,6 +61,29 @@ def upload_to_gdrive(local_file_path, file_name):
         log(f"Google Drive Upload Error: {e}")
         return False
 
+def _finalize_file(final_file_path):
+    """Chowns a file and optionally creates a .ready marker."""
+    puid = os.environ.get('PUID', '').strip()
+    pgid = os.environ.get('PGID', '').strip()
+
+    if puid.isdigit() and pgid.isdigit():
+        try:
+            os.chown(final_file_path, int(puid), int(pgid))
+            log(f"Changed ownership of {final_file_path} to {puid}:{pgid}")
+        except Exception as e:
+            log(f"Failed to change ownership: {e}")
+
+    if CREATE_READY_FILE:
+        ready_file = f"{final_file_path}.ready"
+        try:
+            with open(ready_file, 'w'):
+                pass
+            log(f"Created ready marker file: {ready_file}")
+            if puid.isdigit() and pgid.isdigit():
+                os.chown(ready_file, int(puid), int(pgid))
+        except Exception as e:
+            log(f"Failed to create or chown ready marker file: {e}")
+
 def record_radiko(station_id, start_times, description=None):
     """
     Downloads Radiko segments based solely on start_times.
@@ -83,7 +106,7 @@ def record_radiko(station_id, start_times, description=None):
         try:
             log(f"Downloading segment {i+1}/{len(start_times)}: {start_time}")
             subprocess.run(cmd, check=True)
-            
+
             search_pattern = os.path.join(DOWNLOAD_DIR, f"{file_prefix}.*")
             files = glob.glob(search_pattern)
             if files:
@@ -101,12 +124,12 @@ def record_radiko(station_id, start_times, description=None):
     # 2. Determine final clean file name
     first_start = start_times[0]
     ext = downloaded_files[0].split('.')[-1]
-    
+
     if description:
         final_file_name = f"{first_start}-{station_id}-{description}.{ext}"
     else:
         final_file_name = f"{first_start}-{station_id}.{ext}"
-        
+
     final_file_path = os.path.join(DOWNLOAD_DIR, final_file_name)
 
     # 3. Concatenate (or just rename if only 1 segment)
@@ -116,7 +139,7 @@ def record_radiko(station_id, start_times, description=None):
         with open(concat_list_path, 'w') as f:
             for df in downloaded_files:
                 f.write(f"file '{df}'\n")
-                
+
         concat_cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list_path, "-c", "copy", final_file_path]
         subprocess.run(concat_cmd, check=True)
         os.remove(concat_list_path)
@@ -136,37 +159,20 @@ def record_radiko(station_id, start_times, description=None):
         return True
     elif upload_status == "SKIPPED":
         log(f"Upload skipped. Keeping final file locally at {final_file_path}.")
-        
-        puid = os.environ.get('PUID', '').strip()
-        pgid = os.environ.get('PGID', '').strip()
-        
-        # 1. Chown the main file first so downstream scripts don't hit permission errors
-        if puid.isdigit() and pgid.isdigit():
-            try:
-                os.chown(final_file_path, int(puid), int(pgid))
-                log(f"Changed ownership of {final_file_path} to {puid}:{pgid}")
-            except Exception as e:
-                log(f"Failed to change ownership: {e}")
-                
-        # 2. THEN create the ready marker
-        if CREATE_READY_FILE:
-            ready_file = f"{final_file_path}.ready"
-            try:
-                with open(ready_file, 'w'):
-                    pass
-                log(f"Created ready marker file: {ready_file}")
-                # Chown the ready marker itself to match
-                if puid.isdigit() and pgid.isdigit():
-                    os.chown(ready_file, int(puid), int(pgid))
-            except Exception as e:
-                log(f"Failed to create or chown ready marker file: {e}")
-
+        _finalize_file(final_file_path)
         log("Cleaning up intermediate files...")
         for df in downloaded_files:
             if os.path.exists(df) and df != final_file_path:
                 os.remove(df)
         return True
 
+    # Upload failed — clean up all downloaded files to avoid disk accumulation
+    log("Upload failed. Cleaning up downloaded files...")
+    for df in downloaded_files:
+        if os.path.exists(df):
+            os.remove(df)
+    if os.path.exists(final_file_path):
+        os.remove(final_file_path)
     return False
 
 def download_podcast(url, description=None):
@@ -211,30 +217,13 @@ def download_podcast(url, description=None):
         return True
     elif upload_status == "SKIPPED":
         log(f"Upload skipped. Keeping file locally at {final_file_path}.")
-
-        puid = os.environ.get('PUID', '').strip()
-        pgid = os.environ.get('PGID', '').strip()
-
-        if puid.isdigit() and pgid.isdigit():
-            try:
-                os.chown(final_file_path, int(puid), int(pgid))
-                log(f"Changed ownership of {final_file_path} to {puid}:{pgid}")
-            except Exception as e:
-                log(f"Failed to change ownership: {e}")
-
-        if CREATE_READY_FILE:
-            ready_file = f"{final_file_path}.ready"
-            try:
-                with open(ready_file, 'w'):
-                    pass
-                log(f"Created ready marker file: {ready_file}")
-                if puid.isdigit() and pgid.isdigit():
-                    os.chown(ready_file, int(puid), int(pgid))
-            except Exception as e:
-                log(f"Failed to create or chown ready marker file: {e}")
-
+        _finalize_file(final_file_path)
         return True
 
+    # Upload failed — clean up to avoid disk accumulation
+    log("Upload failed. Cleaning up downloaded file...")
+    if os.path.exists(final_file_path):
+        os.remove(final_file_path)
     return False
 
 

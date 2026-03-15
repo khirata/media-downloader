@@ -62,7 +62,8 @@ def record_video(url):
                     if CREATE_READY_FILE:
                         ready_file = f"{downloaded_file}.ready"
                         try:
-                            open(ready_file, 'w').close()
+                            with open(ready_file, 'w'):
+                                pass
                             log(f"Created ready marker file: {ready_file}")
                             # Chown the ready marker itself to match
                             if puid.isdigit() and pgid.isdigit():
