@@ -7,6 +7,7 @@ from datetime import datetime
 import sys
 import shlex
 import tempfile
+import urllib.request
 
 # Configurations
 SQS_QUEUE_URL = os.environ.get('SQS_QUEUE_URL')
@@ -15,11 +16,70 @@ DOWNLOAD_DIR = "/app/downloads"
 CREATE_READY_FILE = os.environ.get('CREATE_READY_FILE', 'false').lower() == 'true'
 YT_DLP_ARGS_STR = os.environ.get('YT_DLP_ARGS', '')
 GLOBAL_YT_DLP_ARGS = shlex.split(YT_DLP_ARGS_STR) if YT_DLP_ARGS_STR else []
+FAILURE_NOTIFICATION_URL = os.environ.get('FAILURE_NOTIFICATION_URL', '')
 
 sqs = boto3.client('sqs', region_name=AWS_REGION)
 
 def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
+
+def notify_failure(msg_body):
+    """POST a failure notification to FAILURE_NOTIFICATION_URL if configured."""
+    if not FAILURE_NOTIFICATION_URL:
+        return
+    payload = json.dumps({
+        "status": "failed",
+        "worker": "tver-downloader",
+        "message": msg_body,
+        "timestamp": datetime.now().isoformat(),
+    }).encode()
+    try:
+        req = urllib.request.Request(
+            FAILURE_NOTIFICATION_URL, data=payload,
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            log(f"Failure notification sent (HTTP {resp.status})")
+    except Exception as e:
+        log(f"Failed to send failure notification: {e}")
+
+def check_truncation(file_path):
+    """
+    Detect truncated video files by comparing container-reported duration
+    against the actual last packet timestamp.
+    Returns True if the file appears complete, False if truncated.
+    """
+    r1 = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", file_path],
+        capture_output=True, text=True)
+    try:
+        header_dur = float(r1.stdout.strip())
+    except ValueError:
+        log(f"Truncation check: unreadable duration — {file_path}")
+        return False
+
+    r2 = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-show_entries", "packet=pts_time",
+         "-of", "csv=p=0", file_path],
+        capture_output=True, text=True)
+    pts_lines = [l for l in r2.stdout.strip().split('\n') if l.strip()]
+    if not pts_lines:
+        log(f"Truncation check: no packets found — {file_path}")
+        return False
+    try:
+        last_pts = float(pts_lines[-1])
+    except ValueError:
+        log(f"Truncation check: unreadable packet timestamp — {file_path}")
+        return False
+
+    gap = header_dur - last_pts
+    threshold = max(10.0, header_dur * 0.02)
+    if gap > threshold:
+        log(f"Truncation detected: last packet {last_pts:.1f}s, header {header_dur:.1f}s, gap {gap:.1f}s — {file_path}")
+        return False
+
+    log(f"Integrity OK: {header_dur:.1f}s, last packet {last_pts:.1f}s — {file_path}")
+    return True
 
 def record_video(url):
     """
@@ -58,7 +118,13 @@ def record_video(url):
                         except Exception as e:
                             log(f"Failed to change ownership of {downloaded_file}: {e}")
                     
-                    # 2. THEN create the ready marker
+                    # 2. Verify integrity
+                    if not check_truncation(downloaded_file):
+                        log(f"Aborting: truncated file detected. Cleaning up.")
+                        os.remove(filepath_log)
+                        return False
+
+                    # 3. THEN create the ready marker
                     if CREATE_READY_FILE:
                         ready_file = f"{downloaded_file}.ready"
                         try:
@@ -123,6 +189,8 @@ def main():
                     if success:
                         sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=receipt_handle)
                         log("Message processed and deleted from SQS.")
+                    else:
+                        notify_failure(message['Body'])
         except Exception as e:
             log(f"SQS Polling Error: {e}")
             time.sleep(10)

@@ -277,6 +277,7 @@ Both `radiko/.env` and `tver/.env` share a similar structure, providing robust c
 | `DOWNLOAD_DIR` | No | The absolute path on your host machine to save media. Defaults to `/tmp`. |
 | `PUID` / `PGID` | No | Your host machine's User and Group ID. Ensures downloaded files are owned by you instead of `root`. Find via `id -u` and `id -g`. |
 | `YT_DLP_ARGS` | No | Global arguments injected into every `yt-dlp` execution. |
+| `FAILURE_NOTIFICATION_URL` | No | HTTP endpoint to POST a JSON failure report when a download fails (e.g., a Slack or Discord webhook URL). |
 | `CREATE_READY_FILE` | No | Set to `true` to emit a `<filename>.ready` marker file after each download completes, for use with external post-processing hooks. |
 | `TZ` | No | Timezone for log timestamps. Defaults to `Asia/Tokyo`. |
 
