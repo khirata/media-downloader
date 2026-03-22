@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import subprocess
 import tempfile
@@ -25,6 +26,12 @@ YT_DLP_ARGS_STR = os.environ.get('YT_DLP_ARGS', '')
 GLOBAL_YT_DLP_ARGS = shlex.split(YT_DLP_ARGS_STR) if YT_DLP_ARGS_STR else []
 
 sqs = boto3.client('sqs', region_name=AWS_REGION)
+
+_UNSAFE_FILENAME_CHARS = re.compile(r'[/\\:*?"<>|]')
+
+def sanitize_description(desc):
+    """Replace characters that are unsafe in filenames."""
+    return _UNSAFE_FILENAME_CHARS.sub('_', desc)
 
 def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
@@ -126,7 +133,7 @@ def record_radiko(station_id, start_times, description=None):
     ext = downloaded_files[0].split('.')[-1]
 
     if description:
-        final_file_name = f"{first_start}-{station_id}-{description}.{ext}"
+        final_file_name = f"{first_start}-{station_id}-{sanitize_description(description)}.{ext}"
     else:
         final_file_name = f"{first_start}-{station_id}.{ext}"
 
@@ -201,7 +208,7 @@ def download_podcast(url, description=None):
     ext = downloaded_file.split('.')[-1]
 
     if description:
-        final_file_name = f"{episode_id}-{description}.{ext}"
+        final_file_name = f"{episode_id}-{sanitize_description(description)}.{ext}"
     else:
         final_file_name = f"{episode_id}.{ext}"
 
