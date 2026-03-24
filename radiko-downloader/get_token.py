@@ -22,7 +22,10 @@ def main():
     # Save the credentials for the next run
     with open('token.json', 'w') as token:
         token.write(creds.to_json())
+    os.chmod('token.json', 0o600)
     print("Success! token.json has been created.")
+    print("IMPORTANT: Delete client_secret.json — it is not needed at runtime.")
+    print("  rm client_secret.json")
 
 if __name__ == '__main__':
     main()

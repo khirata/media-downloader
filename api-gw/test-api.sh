@@ -1,10 +1,11 @@
 #!/bin/bash
 
 # Configuration
-# Replace these with the outputs from `terraform apply`
-API_ENDPOINT="https://8rs91vcko2.execute-api.us-west-2.amazonaws.com/prod/publish"
-API_KEY="l7RvZePScA8DO6efwxp4D3MQvEyDqNxgyPznO9Qb"
-SECRET_TOKEN="9W9pcd*10CM&&6&dJE83m"
+cd "$(dirname "$0")"
+
+API_ENDPOINT=$(terraform output -raw api_endpoint)
+API_KEY=$(terraform output -raw api_key)
+
 # Radiko test payload
 PAYLOAD='{
   "urls": [

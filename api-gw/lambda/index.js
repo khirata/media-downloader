@@ -106,7 +106,7 @@ exports.handler = async (event) => {
         return {
             statusCode: 500,
             headers: getCorsHeaders(),
-            body: JSON.stringify({ message: 'Internal server error', error: error.message })
+            body: JSON.stringify({ message: 'Internal server error' })
         };
     }
 };
