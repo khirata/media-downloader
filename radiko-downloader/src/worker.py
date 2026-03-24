@@ -31,10 +31,19 @@ SUCCESS_NOTIFICATION_URL = os.environ.get('SUCCESS_NOTIFICATION_URL', '')
 sqs = boto3.client('sqs', region_name=AWS_REGION)
 
 _UNSAFE_FILENAME_CHARS = re.compile(r'[/\\:*?"<>|]')
+_MAX_FILENAME_STEM_BYTES = 180
 
 def sanitize_description(desc):
     """Replace characters that are unsafe in filenames."""
     return _UNSAFE_FILENAME_CHARS.sub('_', desc)
+
+def truncate_filename(name, max_bytes=_MAX_FILENAME_STEM_BYTES):
+    """Truncate a filename stem to fit within max_bytes when UTF-8 encoded."""
+    encoded = name.encode('utf-8')
+    if len(encoded) <= max_bytes:
+        return name
+    truncated = encoded[:max_bytes]
+    return truncated.decode('utf-8', errors='ignore')
 
 def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
@@ -207,7 +216,8 @@ def record_radiko(station_id, start_times, description=None):
     ext = downloaded_files[0].split('.')[-1]
 
     if description:
-        final_file_name = f"{first_start}-{station_id}-{sanitize_description(description)}.{ext}"
+        safe_desc = truncate_filename(sanitize_description(description))
+        final_file_name = f"{first_start}-{station_id}-{safe_desc}.{ext}"
     else:
         final_file_name = f"{first_start}-{station_id}.{ext}"
 
@@ -292,7 +302,8 @@ def download_podcast(url, description=None):
     ext = downloaded_file.split('.')[-1]
 
     if description:
-        final_file_name = f"{episode_id}-{sanitize_description(description)}.{ext}"
+        safe_desc = truncate_filename(sanitize_description(description))
+        final_file_name = f"{episode_id}-{safe_desc}.{ext}"
     else:
         final_file_name = f"{episode_id}.{ext}"
 

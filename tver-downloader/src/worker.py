@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import subprocess
 import time
@@ -20,6 +21,22 @@ FAILURE_NOTIFICATION_URL = os.environ.get('FAILURE_NOTIFICATION_URL', '')
 SUCCESS_NOTIFICATION_URL = os.environ.get('SUCCESS_NOTIFICATION_URL', '')
 
 sqs = boto3.client('sqs', region_name=AWS_REGION)
+
+_UNSAFE_FILENAME_CHARS = re.compile(r'[/\\:*?"<>|]')
+# Leave room for extensions and yt-dlp intermediate suffixes (e.g. .f251.webm.part)
+_MAX_FILENAME_STEM_BYTES = 180
+
+def sanitize_description(desc):
+    """Replace characters that are unsafe in filenames."""
+    return _UNSAFE_FILENAME_CHARS.sub('_', desc)
+
+def truncate_filename(name, max_bytes=_MAX_FILENAME_STEM_BYTES):
+    """Truncate a filename stem to fit within max_bytes when UTF-8 encoded."""
+    encoded = name.encode('utf-8')
+    if len(encoded) <= max_bytes:
+        return name
+    truncated = encoded[:max_bytes]
+    return truncated.decode('utf-8', errors='ignore')
 
 def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
@@ -95,7 +112,7 @@ def check_truncation(file_path):
     log(f"Integrity OK: {header_dur:.1f}s, last packet {last_pts:.1f}s — {file_path}")
     return True
 
-def record_video(url):
+def record_video(url, description=None):
     """
     Downloads video URL via yt-dlp.
     """
@@ -103,8 +120,16 @@ def record_video(url):
     with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmpf:
         filepath_log = tmpf.name
 
+    # Build output template: prefer description over auto-title.
+    # %(title).180B limits the title to 180 UTF-8 bytes, preventing ENAMETOOLONG.
+    if description:
+        safe_name = truncate_filename(sanitize_description(description))
+        output_tmpl = os.path.join(DOWNLOAD_DIR, f"{safe_name}.%(ext)s")
+    else:
+        output_tmpl = os.path.join(DOWNLOAD_DIR, "%(title).180B.%(ext)s")
+
     # We tell yt-dlp to append the absolute path of every generated/moved file to our tmp log
-    cmd = ["yt-dlp", "-o", os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s"), "--print-to-file", "after_move:filepath", filepath_log, url]
+    cmd = ["yt-dlp", "-o", output_tmpl, "--print-to-file", "after_move:filepath", filepath_log, url]
     cmd.extend(GLOBAL_YT_DLP_ARGS)
 
     try:
@@ -118,8 +143,13 @@ def record_video(url):
         
         if os.path.exists(filepath_log):
             with open(filepath_log, 'r', encoding='utf-8') as f:
-                written_files = f.read().splitlines()
-            
+                written_files = [l for l in f.read().splitlines() if l.strip()]
+
+            if not written_files:
+                log(f"No files written for {url} — yt-dlp may have failed silently")
+                os.remove(filepath_log)
+                return False
+
             # Change ownership for all generated files (video, audio, subs, etc.)
             for downloaded_file in written_files:
                 if downloaded_file.strip() and os.path.exists(downloaded_file):
@@ -171,6 +201,7 @@ def process_message(msg_body):
         return False
 
     url = data.get('url')
+    description = data.get('description')
 
     if not url:
         log("Missing url in message")
@@ -180,7 +211,7 @@ def process_message(msg_body):
         log(f"Rejected URL with invalid scheme: {url}")
         return False
 
-    return record_video(url)
+    return record_video(url, description)
 
 def main():
     if not SQS_QUEUE_URL:
