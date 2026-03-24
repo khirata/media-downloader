@@ -71,7 +71,9 @@ def _post_notification(url, payload_dict):
     try:
         req = urllib.request.Request(
             url, data=payload,
-            headers={"Content-Type": "application/json"}, method="POST")
+            headers={"Content-Type": "application/json",
+                     "User-Agent": "Mozilla/5.0 (compatible; media-downloader/1.0)"},
+            method="POST")
         with urllib.request.urlopen(req, timeout=10) as resp:
             log(f"Notification sent (HTTP {resp.status})")
     except Exception as e:
