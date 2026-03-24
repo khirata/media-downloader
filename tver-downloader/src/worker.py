@@ -17,30 +17,44 @@ CREATE_READY_FILE = os.environ.get('CREATE_READY_FILE', 'false').lower() == 'tru
 YT_DLP_ARGS_STR = os.environ.get('YT_DLP_ARGS', '')
 GLOBAL_YT_DLP_ARGS = shlex.split(YT_DLP_ARGS_STR) if YT_DLP_ARGS_STR else []
 FAILURE_NOTIFICATION_URL = os.environ.get('FAILURE_NOTIFICATION_URL', '')
+SUCCESS_NOTIFICATION_URL = os.environ.get('SUCCESS_NOTIFICATION_URL', '')
 
 sqs = boto3.client('sqs', region_name=AWS_REGION)
 
 def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
+def _post_notification(url, payload_dict):
+    """POST a notification to the given URL."""
+    if not url:
+        return
+    payload = json.dumps(payload_dict).encode()
+    try:
+        req = urllib.request.Request(
+            url, data=payload,
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            log(f"Notification sent (HTTP {resp.status})")
+    except Exception as e:
+        log(f"Failed to send notification: {e}")
+
 def notify_failure(msg_body):
     """POST a failure notification to FAILURE_NOTIFICATION_URL if configured."""
-    if not FAILURE_NOTIFICATION_URL:
-        return
-    payload = json.dumps({
+    _post_notification(FAILURE_NOTIFICATION_URL, {
         "status": "failed",
         "worker": "tver-downloader",
         "message": msg_body,
         "timestamp": datetime.now().isoformat(),
-    }).encode()
-    try:
-        req = urllib.request.Request(
-            FAILURE_NOTIFICATION_URL, data=payload,
-            headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            log(f"Failure notification sent (HTTP {resp.status})")
-    except Exception as e:
-        log(f"Failed to send failure notification: {e}")
+    })
+
+def notify_success(msg_body):
+    """POST a success notification to SUCCESS_NOTIFICATION_URL if configured."""
+    _post_notification(SUCCESS_NOTIFICATION_URL, {
+        "status": "success",
+        "worker": "tver-downloader",
+        "message": msg_body,
+        "timestamp": datetime.now().isoformat(),
+    })
 
 def check_truncation(file_path):
     """
@@ -189,6 +203,7 @@ def main():
                     if success:
                         sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=receipt_handle)
                         log("Message processed and deleted from SQS.")
+                        notify_success(message['Body'])
                     else:
                         notify_failure(message['Body'])
         except Exception as e:

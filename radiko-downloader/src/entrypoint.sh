@@ -5,7 +5,8 @@
 # Never use `printenv` here — it would write sensitive credentials to
 # world-readable /etc/environment, exposing them to any process in the container.
 for var in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION SQS_QUEUE_URL \
-           GDRIVE_FOLDER_ID PUID PGID TZ YT_DLP_ARGS CREATE_READY_FILE FAILURE_NOTIFICATION_URL; do
+           GDRIVE_FOLDER_ID PUID PGID TZ YT_DLP_ARGS CREATE_READY_FILE \
+           FAILURE_NOTIFICATION_URL SUCCESS_NOTIFICATION_URL; do
     if [ -n "${!var}" ]; then
         printf '%s=%s\n' "$var" "${!var}" >> /etc/environment
     fi
