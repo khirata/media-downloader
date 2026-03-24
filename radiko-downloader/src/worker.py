@@ -2,7 +2,6 @@ import os
 import re
 import json
 import subprocess
-import tempfile
 import time
 import boto3
 from datetime import datetime
