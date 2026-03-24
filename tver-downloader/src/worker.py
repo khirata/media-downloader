@@ -41,11 +41,26 @@ def truncate_filename(name, max_bytes=_MAX_FILENAME_STEM_BYTES):
 def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
+def _build_webhook_payload(url, payload_dict):
+    """Build a webhook-compatible payload based on the target URL."""
+    status = payload_dict.get("status", "unknown").upper()
+    worker = payload_dict.get("worker", "unknown")
+    message = payload_dict.get("message", "")
+    timestamp = payload_dict.get("timestamp", "")
+    text = f"[{status}] {worker}\n{message}\n{timestamp}"
+
+    if "discord.com/api/webhooks/" in url:
+        return {"content": text}
+    if "hooks.slack.com" in url:
+        return {"text": text}
+    # Generic fallback: include structured fields
+    return payload_dict
+
 def _post_notification(url, payload_dict):
-    """POST a notification to the given URL."""
+    """POST a notification to the given URL (Discord/Slack webhook compatible)."""
     if not url:
         return
-    payload = json.dumps(payload_dict).encode()
+    payload = json.dumps(_build_webhook_payload(url, payload_dict)).encode()
     try:
         req = urllib.request.Request(
             url, data=payload,
