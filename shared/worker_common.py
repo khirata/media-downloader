@@ -4,11 +4,12 @@ import json
 import subprocess
 import time
 import boto3
-from datetime import datetime
+from datetime import datetime, timedelta
 import sys
 import shlex
 import urllib.request
 import urllib.error
+import xml.etree.ElementTree as ET
 
 # Configurations
 SQS_QUEUE_URL = os.environ.get('SQS_QUEUE_URL')
@@ -45,13 +46,91 @@ def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
 
+def _extract_first_url(msg_body):
+    """Extract the first relevant URL from an SQS message body string."""
+    try:
+        data = json.loads(msg_body)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    # Podcast or tver/youtube: direct url field
+    if data.get('url'):
+        return data['url']
+
+    # Radiko time-shift: construct from station_id + first start_time
+    station_id = data.get('station_id')
+    start_times = data.get('start_times') or []
+    if not start_times and data.get('start_time'):
+        start_times = [data['start_time']]
+    if station_id and start_times:
+        return f"https://radiko.jp/#!/ts/{station_id}/{start_times[0]}00"
+
+    return None
+
+
+def _fetch_radiko_title(station_id, start_time):
+    """
+    Look up the program title from the Radiko schedule API.
+    start_time is a 12-digit string (YYYYMMDDHHmm); the API uses 14-digit ft values.
+    Falls back to trying the previous day's schedule for programs starting between
+    midnight and ~05:00 (Radiko's day boundary).
+    Returns None on any failure or if no match is found; never raises.
+    """
+    try:
+        ft = start_time + "00"
+        base_date = datetime.strptime(start_time[:8], "%Y%m%d")
+    except Exception as e:
+        log(f"Failed to parse start_time for Radiko title lookup: {e}")
+        return None
+
+    for delta in (0, -1):
+        date = (base_date + timedelta(days=delta)).strftime("%Y%m%d")
+        api_url = f"https://radiko.jp/v3/program/station/date/{date}/{station_id}.xml"
+        try:
+            req = urllib.request.Request(api_url, headers={"User-Agent": "Mozilla/5.0 (compatible; media-downloader/1.0)"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                root = ET.fromstring(resp.read())
+            for prog in root.iter('prog'):
+                if prog.get('ft') == ft:
+                    title_el = prog.find('title')
+                    return title_el.text if title_el is not None and title_el.text else None
+        except Exception as e:
+            log(f"Failed to fetch Radiko program title ({date}/{station_id}): {e}")
+    return None
+
+
+def _extract_radiko_title_from_message(msg_body):
+    """Fetch Radiko program title from the schedule API for time-shift messages."""
+    try:
+        data = json.loads(msg_body)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    station_id = data.get('station_id')
+    start_times = data.get('start_times') or []
+    if not start_times and data.get('start_time'):
+        start_times = [data['start_time']]
+
+    if station_id and start_times:
+        return _fetch_radiko_title(station_id, start_times[0])
+    return None
+
+
 def _build_webhook_payload(url, payload_dict):
     """Build a webhook-compatible payload based on the target URL."""
     status = payload_dict.get("status", "unknown").upper()
     worker = payload_dict.get("worker", "unknown")
-    message = payload_dict.get("message", "")
+    title = payload_dict.get("title", "")
+    source_url = payload_dict.get("url", "")
     timestamp = payload_dict.get("timestamp", "")
-    text = f"[{status}] {worker}\n{message}\n{timestamp}"
+
+    lines = [f"[{status}] {worker}"]
+    if title:
+        lines.append(title)
+    if source_url:
+        lines.append(source_url)
+    lines.append(timestamp)
+    text = "\n".join(lines)
 
     if "discord.com/api/webhooks/" in url:
         return {"content": text}
@@ -163,23 +242,29 @@ def run_main(worker_name, process_message_fn):
                 log(f"Received message: {response}")
                 for message in response['Messages']:
                     receipt_handle = message['ReceiptHandle']
-                    success = process_message_fn(message['Body'])
+                    success, worker_title = process_message_fn(message['Body'])
+                    source_url = _extract_first_url(message['Body'])
+                    # For Radiko time-shift, fetch the actual program title from the schedule API.
+                    # worker_title takes precedence (e.g. TVer title from yt-dlp).
+                    try:
+                        radiko_title = _extract_radiko_title_from_message(message['Body'])
+                    except Exception as e:
+                        log(f"Title lookup failed, continuing without title: {e}")
+                        radiko_title = None
+                    title = worker_title or radiko_title or ""
+                    notification = {
+                        "worker": worker_name,
+                        "title": title,
+                        "url": source_url or "",
+                        "message": message['Body'],
+                        "timestamp": datetime.now().isoformat(),
+                    }
                     if success:
                         sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=receipt_handle)
                         log("Message processed and deleted from SQS.")
-                        _post_notification(SUCCESS_NOTIFICATION_URL, {
-                            "status": "success",
-                            "worker": worker_name,
-                            "message": message['Body'],
-                            "timestamp": datetime.now().isoformat(),
-                        })
+                        _post_notification(SUCCESS_NOTIFICATION_URL, {**notification, "status": "success"})
                     else:
-                        _post_notification(FAILURE_NOTIFICATION_URL, {
-                            "status": "failed",
-                            "worker": worker_name,
-                            "message": message['Body'],
-                            "timestamp": datetime.now().isoformat(),
-                        })
+                        _post_notification(FAILURE_NOTIFICATION_URL, {**notification, "status": "failed"})
         except Exception as e:
             log(f"SQS Polling Error: {e}")
             time.sleep(10)

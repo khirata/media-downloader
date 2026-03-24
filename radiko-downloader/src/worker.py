@@ -13,6 +13,7 @@ from worker_common import (
     DOWNLOAD_DIR, GLOBAL_YT_DLP_ARGS,
     log, sanitize_description, truncate_filename,
     check_truncation, _finalize_file, run_main,
+    _fetch_radiko_title,
 )
 
 GDRIVE_FOLDER_ID = os.environ.get('GDRIVE_FOLDER_ID')
@@ -96,7 +97,12 @@ def record_radiko(station_id, start_times, description=None):
         safe_desc = truncate_filename(sanitize_description(description))
         final_file_name = f"{first_start}-{station_id}-{safe_desc}.{ext}"
     else:
-        final_file_name = f"{first_start}-{station_id}.{ext}"
+        title = _fetch_radiko_title(station_id, first_start)
+        if title:
+            safe_title = truncate_filename(sanitize_description(title))
+            final_file_name = f"{first_start}-{station_id}-{safe_title}.{ext}"
+        else:
+            final_file_name = f"{first_start}-{station_id}.{ext}"
 
     final_file_path = os.path.join(DOWNLOAD_DIR, final_file_name)
 
@@ -225,7 +231,7 @@ def process_message(msg_body):
 
     # Podcast: {"type": "radiko", "url": "https://radiko.jp/podcast/episodes/..."}
     if data.get('url'):
-        return download_podcast(data['url'], description)
+        return download_podcast(data['url'], description), None
 
     station_id = data.get('station_id')
     start_times = data.get('start_times', [])
@@ -236,9 +242,9 @@ def process_message(msg_body):
 
     if not station_id or not start_times:
         log("Missing station_id or start_times in message")
-        return False
+        return False, None
 
-    return record_radiko(station_id, start_times, description)
+    return record_radiko(station_id, start_times, description), None
 
 
 if __name__ == "__main__":

@@ -14,10 +14,12 @@ from worker_common import (
 def record_video(url, description=None):
     """
     Downloads video URL via yt-dlp.
+    Returns (success: bool, title: str | None).
     """
-    # Generate a temporary file to store the exact paths of the downloaded files
     with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmpf:
         filepath_log = tmpf.name
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmpf:
+        title_log = tmpf.name
 
     # Build output template: prefer description over auto-title.
     # %(title).180B limits the title to 180 UTF-8 bytes, preventing ENAMETOOLONG.
@@ -27,14 +29,24 @@ def record_video(url, description=None):
     else:
         output_tmpl = os.path.join(DOWNLOAD_DIR, "%(title).180B.%(ext)s")
 
-    # We tell yt-dlp to append the absolute path of every generated/moved file to our tmp log
-    cmd = ["yt-dlp", "-o", output_tmpl, "--print-to-file", "after_move:filepath", filepath_log, url]
+    # Capture the filepath and the original (unsanitized) title from yt-dlp.
+    cmd = ["yt-dlp", "-o", output_tmpl,
+           "--print-to-file", "after_move:filepath", filepath_log,
+           "--print-to-file", "after_move:%(title)s", title_log,
+           url]
     cmd.extend(GLOBAL_YT_DLP_ARGS)
 
     try:
         log(f"Downloading Video URL: {url}")
         subprocess.run(cmd, check=True)
         log(f"Successfully downloaded {url}")
+
+        title = None
+        if os.path.exists(title_log):
+            with open(title_log, 'r', encoding='utf-8') as f:
+                lines = [l for l in f.read().splitlines() if l.strip()]
+                title = lines[0] if lines else None
+            os.remove(title_log)
 
         if os.path.exists(filepath_log):
             with open(filepath_log, 'r', encoding='utf-8') as f:
@@ -43,25 +55,25 @@ def record_video(url, description=None):
             if not written_files:
                 log(f"No files written for {url} — yt-dlp may have failed silently")
                 os.remove(filepath_log)
-                return False
+                return False, None
 
             for downloaded_file in written_files:
                 if downloaded_file.strip() and os.path.exists(downloaded_file):
                     if not check_truncation(downloaded_file):
                         log(f"Aborting: truncated file detected. Cleaning up.")
                         os.remove(filepath_log)
-                        return False
+                        return False, None
                     _finalize_file(downloaded_file)
 
             os.remove(filepath_log)
 
-        return True
+        return True, title
     except subprocess.CalledProcessError as e:
         log(f"Error downloading {url}: {e}")
-
-        if os.path.exists(filepath_log):
-            os.remove(filepath_log)
-        return False
+        for f in (filepath_log, title_log):
+            if os.path.exists(f):
+                os.remove(f)
+        return False, None
 
 
 def process_message(msg_body):
@@ -90,6 +102,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         url = sys.argv[1]
         log(f"Manual override: downloading {url}")
-        record_video(url)
+        success, _ = record_video(url)
     else:
         run_main("tver-downloader", process_message)
