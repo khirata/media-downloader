@@ -9,6 +9,7 @@ import sys
 import shlex
 import tempfile
 import urllib.request
+import urllib.error
 
 # Configurations
 SQS_QUEUE_URL = os.environ.get('SQS_QUEUE_URL')
@@ -67,6 +68,8 @@ def _post_notification(url, payload_dict):
             headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=10) as resp:
             log(f"Notification sent (HTTP {resp.status})")
+    except urllib.error.HTTPError as e:
+        log(f"Failed to send notification: HTTP {e.code} — {e.read().decode(errors='replace')}")
     except Exception as e:
         log(f"Failed to send notification: {e}")
 
