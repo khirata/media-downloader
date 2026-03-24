@@ -111,7 +111,7 @@ def check_truncation(file_path):
     valid_pts = []
     for line in r2.stdout.strip().split('\n'):
         try:
-            valid_pts.append(float(line.strip()))
+            valid_pts.append(float(line.strip().rstrip(',')))
         except ValueError:
             continue
     if not valid_pts:
