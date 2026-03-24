@@ -93,15 +93,16 @@ def check_truncation(file_path):
         ["ffprobe", "-v", "quiet", "-show_entries", "packet=pts_time",
          "-of", "csv=p=0", file_path],
         capture_output=True, text=True)
-    pts_lines = [l for l in r2.stdout.strip().split('\n') if l.strip()]
-    if not pts_lines:
-        log(f"Truncation check: no packets found — {file_path}")
+    valid_pts = []
+    for line in r2.stdout.strip().split('\n'):
+        try:
+            valid_pts.append(float(line.strip()))
+        except ValueError:
+            continue
+    if not valid_pts:
+        log(f"Truncation check: no readable packet timestamps — {file_path}")
         return False
-    try:
-        last_pts = float(pts_lines[-1])
-    except ValueError:
-        log(f"Truncation check: unreadable packet timestamp — {file_path}")
-        return False
+    last_pts = valid_pts[-1]
 
     gap = header_dur - last_pts
     threshold = max(10.0, header_dur * 0.02)
