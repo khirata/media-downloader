@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const urlListEl = document.getElementById('urlList');
   const emptyStateEl = document.getElementById('emptyState');
   const publishAllBtn = document.getElementById('publishAllBtn');
+  const clearAllBtn = document.getElementById('clearAllBtn');
   const addManualBtn = document.getElementById('addManualBtn');
   const settingsBtn = document.getElementById('settingsBtn');
   const globalDescriptionEl = document.getElementById('globalDescription');
@@ -16,6 +17,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Listeners
   settingsBtn.addEventListener('click', () => {
     chrome.runtime.openOptionsPage();
+  });
+
+  clearAllBtn.addEventListener('click', () => {
+    urls = [];
+    saveUrls();
+    renderList();
   });
 
   addManualBtn.addEventListener('click', () => {
@@ -99,9 +106,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (urls.length === 0) {
       emptyStateEl.style.display = 'block';
       publishAllBtn.disabled = true;
+      clearAllBtn.disabled = true;
     } else {
       emptyStateEl.style.display = 'none';
       publishAllBtn.disabled = false;
+      clearAllBtn.disabled = false;
 
       urls.forEach((url, index) => {
         const itemEl = document.createElement('div');

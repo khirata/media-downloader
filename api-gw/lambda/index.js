@@ -41,42 +41,28 @@ exports.handler = async (event) => {
         }
 
         const publishResults = [];
-        const radikoUrls = [];
-        const tverUrls = [];
-        const youtubeUrls = [];
         const unhandledUrls = [];
-
-        // Dispatch based on URL
-        for (const u of urlList) {
-            if (u.includes('radiko.jp')) {
-                radikoUrls.push(u);
-            } else if (u.includes('tver.jp')) {
-                tverUrls.push(u);
-            } else if (u.includes('youtube.com') || u.includes('youtu.be')) {
-                youtubeUrls.push(u);
-            } else {
-                unhandledUrls.push(u);
-            }
-        }
 
         const topicArn = process.env.SNS_TOPIC_ARN;
 
-        // Process Radiko URLs
-        if (radikoUrls.length > 0) {
-            const results = await handleRadikoUrls(radikoUrls, description, topicArn, snsClient);
-            publishResults.push(...results);
-        }
-
-        // Process TVer URLs
-        if (tverUrls.length > 0) {
-            const results = await handleTverUrls(tverUrls, topicArn, snsClient);
-            publishResults.push(...results);
-        }
-
-        // Process YouTube URLs
-        if (youtubeUrls.length > 0) {
-            const results = await handleYoutubeUrls(youtubeUrls, topicArn, snsClient);
-            publishResults.push(...results);
+        // Dispatch each URL in insertion order
+        for (const u of urlList) {
+            if (u.includes('radiko.jp')) {
+                const result = await handleRadikoUrl(u, description, topicArn, snsClient);
+                if (result) {
+                    publishResults.push(result);
+                } else {
+                    unhandledUrls.push(u);
+                }
+            } else if (u.includes('tver.jp')) {
+                const result = await handleTverUrl(u, topicArn, snsClient);
+                publishResults.push(result);
+            } else if (u.includes('youtube.com') || u.includes('youtu.be')) {
+                const result = await handleYoutubeUrl(u, topicArn, snsClient);
+                publishResults.push(result);
+            } else {
+                unhandledUrls.push(u);
+            }
         }
 
         if (unhandledUrls.length > 0) {
@@ -119,133 +105,71 @@ function getCorsHeaders() {
     };
 }
 
-async function handleRadikoUrls(urls, description, topicArn, snsClient) {
+async function handleRadikoUrl(u, description, topicArn, snsClient) {
     const radikoRegex = /^https?:\/\/radiko\.jp\/#!\/ts\/([A-Za-z0-9_-]+)\/(\d{14})/;
     const podcastRegex = /^https?:\/\/radiko\.jp\/podcast\/episodes\//;
-    const stations = {};
-    const publishResults = [];
 
-    for (const u of urls) {
-        if (podcastRegex.test(u)) {
-            // Podcast URLs are published individually with the URL directly
-            const payload = { type: 'radiko', url: u };
-            if (description) payload.description = description;
-
-            const params = {
-                TopicArn: topicArn,
-                Message: JSON.stringify(payload),
-                Subject: 'Radiko Podcast Download Scheduled'
-            };
-
-            const command = new PublishCommand(params);
-            const result = await snsClient.send(command);
-            console.log(`Successfully published Radiko podcast message ID: ${result.MessageId} for URL ${u}`);
-
-            publishResults.push({ type: 'radiko_podcast', url: u, messageId: result.MessageId });
-            continue;
-        }
-
-        const match = u.match(radikoRegex);
-        if (match) {
-            const stationId = match[1];
-            const startTime = match[2].substring(0, 12); // take first 12 chars
-
-            if (!stations[stationId]) {
-                stations[stationId] = new Set();
-            }
-            stations[stationId].add(startTime);
-        } else {
-            console.warn(`Skipped unparsable Radiko URL: ${u}`);
-        }
-    }
-
-    for (const [stationId, startTimesSet] of Object.entries(stations)) {
-        const startTimes = Array.from(startTimesSet).sort();
-        const payload = {
-            type: 'radiko',
-            station_id: stationId,
-            start_times: startTimes
-        };
-        if (description) {
-            payload.description = description;
-        }
+    if (podcastRegex.test(u)) {
+        const payload = { type: 'radiko', url: u };
+        if (description) payload.description = description;
 
         const params = {
             TopicArn: topicArn,
             Message: JSON.stringify(payload),
-            Subject: 'Radiko Recordings Scheduled'
+            Subject: 'Radiko Podcast Download Scheduled'
         };
 
-        const command = new PublishCommand(params);
-        const result = await snsClient.send(command);
-        console.log(`Successfully published Radiko message ID: ${result.MessageId} for station ${stationId}`);
-
-        publishResults.push({
-            type: 'radiko',
-            stationId,
-            messageId: result.MessageId
-        });
+        const result = await snsClient.send(new PublishCommand(params));
+        console.log(`Successfully published Radiko podcast message ID: ${result.MessageId} for URL ${u}`);
+        return { type: 'radiko_podcast', url: u, messageId: result.MessageId };
     }
 
-    return publishResults;
+    const match = u.match(radikoRegex);
+    if (!match) {
+        console.warn(`Skipped unparsable Radiko URL: ${u}`);
+        return null;
+    }
+
+    const stationId = match[1];
+    const startTime = match[2].substring(0, 12);
+    const payload = { type: 'radiko', station_id: stationId, start_times: [startTime] };
+    if (description) payload.description = description;
+
+    const params = {
+        TopicArn: topicArn,
+        Message: JSON.stringify(payload),
+        Subject: 'Radiko Recording Scheduled'
+    };
+
+    const result = await snsClient.send(new PublishCommand(params));
+    console.log(`Successfully published Radiko message ID: ${result.MessageId} for station ${stationId} at ${startTime}`);
+    return { type: 'radiko', stationId, startTime, messageId: result.MessageId };
 }
 
-async function handleTverUrls(urls, topicArn, snsClient) {
-    const publishResults = [];
+async function handleTverUrl(u, topicArn, snsClient) {
+    const payload = { type: 'tver', url: u };
 
-    // TVer publishes each URL independently
-    for (const u of urls) {
-        const payload = {
-            type: 'tver',
-            url: u
-        };
+    const params = {
+        TopicArn: topicArn,
+        Message: JSON.stringify(payload),
+        Subject: 'TVer Recording Scheduled'
+    };
 
-        const params = {
-            TopicArn: topicArn,
-            Message: JSON.stringify(payload),
-            Subject: 'TVer Recording Scheduled'
-        };
-
-        const command = new PublishCommand(params);
-        const result = await snsClient.send(command);
-        console.log(`Successfully published TVer message ID: ${result.MessageId} for URL ${u}`);
-
-        publishResults.push({
-            type: 'tver',
-            url: u,
-            messageId: result.MessageId
-        });
-    }
-
-    return publishResults;
+    const result = await snsClient.send(new PublishCommand(params));
+    console.log(`Successfully published TVer message ID: ${result.MessageId} for URL ${u}`);
+    return { type: 'tver', url: u, messageId: result.MessageId };
 }
 
-async function handleYoutubeUrls(urls, topicArn, snsClient) {
-    const publishResults = [];
+async function handleYoutubeUrl(u, topicArn, snsClient) {
+    const payload = { type: 'youtube', url: u };
 
-    // YouTube publishes each URL independently
-    for (const u of urls) {
-        const payload = {
-            type: 'youtube',
-            url: u
-        };
+    const params = {
+        TopicArn: topicArn,
+        Message: JSON.stringify(payload),
+        Subject: 'YouTube Recording Scheduled'
+    };
 
-        const params = {
-            TopicArn: topicArn,
-            Message: JSON.stringify(payload),
-            Subject: 'YouTube Recording Scheduled'
-        };
-
-        const command = new PublishCommand(params);
-        const result = await snsClient.send(command);
-        console.log(`Successfully published YouTube message ID: ${result.MessageId} for URL ${u}`);
-
-        publishResults.push({
-            type: 'youtube',
-            url: u,
-            messageId: result.MessageId
-        });
-    }
-
-    return publishResults;
+    const result = await snsClient.send(new PublishCommand(params));
+    console.log(`Successfully published YouTube message ID: ${result.MessageId} for URL ${u}`);
+    return { type: 'youtube', url: u, messageId: result.MessageId };
 }
