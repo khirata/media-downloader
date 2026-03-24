@@ -14,12 +14,13 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 WORKDIR /app
 
 # Install Python deps
-COPY requirements.txt .
+COPY radiko-downloader/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code and scripts
-COPY src/ ./src/
-COPY config /.config/yt-dlp/
+COPY radiko-downloader/src/ ./src/
+COPY shared/ ./src/
+COPY radiko-downloader/config /.config/yt-dlp/
 
 # Start the SQS Polling loop directly (the -u flag forces real-time logging)
 CMD ["python", "-u", "src/worker.py"]

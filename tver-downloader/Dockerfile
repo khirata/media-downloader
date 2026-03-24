@@ -14,11 +14,12 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Install Python deps
-COPY requirements.txt .
+COPY tver-downloader/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
-COPY src/ ./src/
+COPY tver-downloader/src/ ./src/
+COPY shared/ ./src/
 
 # Start the SQS Polling loop directly
 CMD ["python", "-u", "src/worker.py"]

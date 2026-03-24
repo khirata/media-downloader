@@ -1,6 +1,8 @@
 services:
   tver-worker:
-    build: .
+    build:
+      context: ..
+      dockerfile: tver-downloader/Dockerfile
     container_name: tver_recorder
     restart: unless-stopped
     env_file:

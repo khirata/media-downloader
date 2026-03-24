@@ -1,6 +1,8 @@
 services:
   radiko-worker:
-    build: .
+    build:
+      context: ..
+      dockerfile: radiko-downloader/Dockerfile
     container_name: radiko_recorder
     restart: unless-stopped
     env_file:
