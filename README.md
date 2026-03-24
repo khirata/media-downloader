@@ -116,7 +116,7 @@ If you want to use Google Drive:
 1. Go to the Google Cloud Console and enable the **Google Drive API**.
 2. Create an **OAuth Consent Screen** (Internal for Workspace users, External for regular users).
 3. Create **OAuth Client ID** credentials (Desktop App) and download the JSON.
-4. Run the local authentication script to generate your `token.json` file. Place `token.json` in the `radiko/` folder. *(Note: Do not include `client_secret.json` in the runtime environment).*
+4. Run `python get_token.py` from inside `radiko-downloader/` (requires `client_secret.json` in the same directory) → completes the browser OAuth flow → generates `token.json` in `radiko-downloader/`. *(Note: Do not include `client_secret.json` in the runtime environment).*
 
 ### 3. Configure Docker Environment Variables
 You must create a `.env` file in **both** the `radiko-downloader/` and `tver-downloader/` directories. Start by copying the examples:
@@ -265,7 +265,7 @@ For Radiko specifically, the included [`radiko-downloader/SCHEDULING.md`](./radi
 
 ## 🎛️ Environment Configuration
 
-Both `radiko/.env` and `tver/.env` share a similar structure, providing robust configuration options:
+Both `radiko-downloader/.env` and `tver-downloader/.env` share a similar structure, providing robust configuration options:
 
 | Variable | Required | Description |
 | :--- | :---: | :--- |
