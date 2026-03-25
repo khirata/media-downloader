@@ -53,9 +53,9 @@ def record_video(url, description=None):
                 written_files = [l for l in f.read().splitlines() if l.strip()]
 
             if not written_files:
-                log(f"No files written for {url} — yt-dlp may have failed silently")
+                log(f"No files written for {url} — already downloaded or yt-dlp skipped")
                 os.remove(filepath_log)
-                return False, None
+                return "duplicate", None
 
             for downloaded_file in written_files:
                 if downloaded_file.strip() and os.path.exists(downloaded_file):

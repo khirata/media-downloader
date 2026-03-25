@@ -80,8 +80,8 @@ def record_radiko(station_id, start_times, description=None):
             if files:
                 downloaded_files.append(files[0])
             else:
-                log(f"Could not find output file for {start_time}")
-                return False
+                log(f"No output file for {start_time} — already downloaded or yt-dlp skipped")
+                return "duplicate"
         except subprocess.CalledProcessError as e:
             log(f"Error downloading {start_time}: {e}")
             return False
@@ -179,8 +179,8 @@ def download_podcast(url, description=None):
 
     files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{file_prefix}.*"))
     if not files:
-        log(f"Could not find output file for podcast {episode_id}")
-        return False
+        log(f"No output file for podcast {episode_id} — already downloaded or yt-dlp skipped")
+        return "duplicate"
 
     downloaded_file = files[0]
     ext = downloaded_file.split('.')[-1]

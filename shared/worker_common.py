@@ -259,7 +259,10 @@ def run_main(worker_name, process_message_fn):
                         "message": message['Body'],
                         "timestamp": datetime.now().isoformat(),
                     }
-                    if success:
+                    if success == "duplicate":
+                        sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=receipt_handle)
+                        log("Duplicate detected. Dropping message from SQS.")
+                    elif success:
                         sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=receipt_handle)
                         log("Message processed and deleted from SQS.")
                         _post_notification(SUCCESS_NOTIFICATION_URL, {**notification, "status": "success"})
