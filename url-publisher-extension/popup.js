@@ -26,7 +26,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   addManualBtn.addEventListener('click', () => {
-    urls.unshift('https://');
+    urls.unshift({ url: 'https://', title: '' });
     saveUrls();
     renderList();
   });
@@ -37,7 +37,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Publish all items at once with the global description
     const desc = globalDescriptionEl.value.trim();
-    const payload = { urls: urls };
+    const payload = { urls: urls.map(item => item.url) };
     if (desc) {
       payload.description = desc;
     }
@@ -57,7 +57,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function loadUrls() {
     return new Promise((resolve) => {
       chrome.storage.local.get(['urlStack', 'globalDesc'], (result) => {
-        urls = result.urlStack || [];
+        const stored = result.urlStack || [];
+        // Migrate legacy string entries to {url, title} objects
+        urls = stored.map(item =>
+          typeof item === 'string' ? { url: item, title: '' } : item
+        );
         if (result.globalDesc) {
           globalDescriptionEl.value = result.globalDesc;
         }
@@ -86,10 +90,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs && tabs[0] && tabs[0].url) {
           const tabUrl = tabs[0].url;
+          const tabTitle = tabs[0].title || '';
           // Don't add if it's already a chrome extension page or already in stack
           if (!tabUrl.startsWith('chrome://') && !tabUrl.startsWith('chrome-extension://')) {
-            if (!urls.includes(tabUrl)) {
-              urls.unshift(tabUrl);
+            if (!urls.some(item => item.url === tabUrl)) {
+              urls.unshift({ url: tabUrl, title: tabTitle });
               saveUrls().then(resolve);
               return;
             }
@@ -112,16 +117,24 @@ document.addEventListener('DOMContentLoaded', async () => {
       publishAllBtn.disabled = false;
       clearAllBtn.disabled = false;
 
-      urls.forEach((url, index) => {
+      urls.forEach((item, index) => {
         const itemEl = document.createElement('div');
         itemEl.className = 'url-item';
+
+        if (item.title) {
+          const titleEl = document.createElement('div');
+          titleEl.className = 'url-title';
+          titleEl.textContent = item.title;
+          titleEl.title = item.title;
+          itemEl.appendChild(titleEl);
+        }
 
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'url-input';
-        input.value = url;
+        input.value = item.url;
         input.addEventListener('change', (e) => {
-          urls[index] = e.target.value;
+          urls[index] = { ...urls[index], url: e.target.value };
           saveUrls();
         });
 
@@ -160,7 +173,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           publishBtn.textContent = '...';
 
           const desc = globalDescriptionEl.value.trim();
-          const payload = { urls: [urls[index]] };
+          const payload = { urls: [urls[index].url] };
           if (desc) {
             payload.description = desc;
           }
