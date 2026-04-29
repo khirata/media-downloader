@@ -93,7 +93,7 @@ resource "aws_lambda_function" "publisher" {
   function_name                  = "url-publisher-function"
   role                           = aws_iam_role.lambda_role.arn
   handler                        = "index.handler"
-  runtime                        = "nodejs20.x"
+  runtime                        = "nodejs24.x"
   source_code_hash               = data.archive_file.lambda_zip.output_base64sha256
   reserved_concurrent_executions = 5
 
@@ -262,5 +262,3 @@ output "sns_topic_arn" {
   value       = aws_sns_topic.dispatcher.arn
   description = "ARN of the dispatcher SNS topic"
 }
-
-
