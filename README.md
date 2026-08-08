@@ -223,6 +223,15 @@ Before you can publish URLs, you must point the extension to your AWS backend.
 4. Click **Save Settings**.
 5. You are ready to go! Navigate to a supported video/radio page, open the extension, and click **Publish**.
 
+**Version stamping (contributors only):**
+The settings page shows a build version in ISO-8601 form (e.g. `20260808T12:01:55-0700`), read from `version_name` in `manifest.json`. A versioned pre-commit hook refreshes it automatically on any commit that touches `url-publisher-extension/`. Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook never blocks a commit. It skips stamping (with a warning) if `manifest.json` has unstaged changes, so re-staging it can't sweep in work you deliberately left out. Bypass a single commit with `SKIP_VERSION_STAMP=1 git commit ...`.
+
 ### 6. Triggering & Scheduling Recordings (HTTP API)
 While the primary method of dispatching URLs is via the Chrome extension interfacing with the API Gateway, you can still trigger recordings manually or schedule them via `cron` using standard HTTP POST requests. 
 

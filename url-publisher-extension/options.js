@@ -3,6 +3,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const endpointEl = document.getElementById('endpoint');
     const apiKeyEl = document.getElementById('apiKey');
     const statusMsg = document.getElementById('statusMessage');
+    const versionEl = document.getElementById('versionValue');
+
+    // The ISO-8601 build stamp lives in version_name; manifest "version" has to
+    // stay numeric for Chrome, so it is only a fallback.
+    const manifest = chrome.runtime.getManifest();
+    versionEl.textContent = manifest.version_name || manifest.version;
 
     // Load saved options
     chrome.storage.sync.get(['endpoint', 'apiKey'], (items) => {
