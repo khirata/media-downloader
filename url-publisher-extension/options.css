@@ -125,3 +125,21 @@ small {
 .status-msg.show {
     opacity: 1;
 }
+
+.version-info {
+    display: flex;
+    justify-content: center;
+    align-items: baseline;
+    gap: 8px;
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}
+
+.version-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    /* Long stamp must not force the settings card to scroll sideways. */
+    overflow-wrap: anywhere;
+}
