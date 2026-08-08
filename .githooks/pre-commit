@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+#
+# Stamps url-publisher-extension/manifest.json with an ISO-8601 build time
+# whenever a commit touches the extension, so the version shown on the settings
+# page always reflects the commit that produced it.
+#
+# Enable:      git config core.hooksPath .githooks
+# Skip once:   SKIP_VERSION_STAMP=1 git commit ...   (or git commit --no-verify)
+#
+# This hook never blocks a commit. If it cannot stamp safely it warns and lets
+# the commit through unstamped.
+
+set -euo pipefail
+
+if [ "${SKIP_VERSION_STAMP:-0}" = "1" ]; then
+    exit 0
+fi
+
+EXT_DIR="url-publisher-extension"
+MANIFEST="$EXT_DIR/manifest.json"
+
+cd "$(git rev-parse --show-toplevel)"
+
+# Only stamp when this commit actually touches the extension.
+if ! git diff --cached --name-only --diff-filter=ACMR -- "$EXT_DIR" | grep -q .; then
+    exit 0
+fi
+
+if [ ! -f "$MANIFEST" ]; then
+    exit 0
+fi
+
+# Stamping means re-staging the manifest, which would also sweep in any unstaged
+# edits to it. Rather than guess at what was deliberately left out, skip.
+if ! git diff --quiet -- "$MANIFEST"; then
+    echo "pre-commit: $MANIFEST has unstaged changes - leaving version_name alone." >&2
+    echo "            Stage or stash them to get a fresh stamp." >&2
+    exit 0
+fi
+
+STAMP="$(date '+%Y%m%dT%H:%M:%S%z')"
+
+# Rewrite only the version_name value so the rest of the file stays byte-identical.
+python3 - "$MANIFEST" "$STAMP" <<'PY'
+import re
+import sys
+
+path, stamp = sys.argv[1], sys.argv[2]
+
+with open(path, encoding='utf-8') as fh:
+    text = fh.read()
+
+if re.search(r'"version_name"\s*:', text):
+    new = re.sub(r'("version_name"\s*:\s*")[^"]*(")',
+                 lambda m: m.group(1) + stamp + m.group(2), text, count=1)
+else:
+    # Keep version_name next to version rather than appending it somewhere odd.
+    match = re.search(r'^(\s*)"version"\s*:\s*"[^"]*",[ \t]*\n', text, re.MULTILINE)
+    if not match:
+        sys.stderr.write('pre-commit: no "version" key found; skipping stamp.\n')
+        sys.exit(0)
+    indent = match.group(1)
+    new = (text[:match.end()]
+           + f'{indent}"version_name": "{stamp}",\n'
+           + text[match.end():])
+
+if new != text:
+    with open(path, 'w', encoding='utf-8') as fh:
+        fh.write(new)
+PY
+
+git add "$MANIFEST"
+echo "pre-commit: stamped version_name = $STAMP"
