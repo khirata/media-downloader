@@ -10,12 +10,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Cap on how many just-published URLs we remember, so the list can't grow
   // unbounded when the popup stays open across many publishes.
   const MAX_REMEMBERED_PUBLISHED = 50;
+  // Hex chars kept from each SHA-256 digest. 64 bits keeps collisions out of a
+  // list this small (~1e-16 across the cap) while staying compact in storage.
+  const URL_HASH_LENGTH = 16;
 
   let urls = [];
-  // URLs from recent successful publishes. The current tab is skipped once if
-  // it appears here, so publishing doesn't immediately re-stack the page you
-  // are on when the popup reopens.
-  let recentlyPublished = [];
+  // Hashes of URLs from recent successful publishes. The current tab is skipped
+  // once if its hash appears here, so publishing doesn't immediately re-stack
+  // the page you are on when the popup reopens. Stored hashed rather than plain:
+  // matching is exact equality either way, and unlike urlStack this list
+  // deliberately outlives the visible stack, so there's no reason to leave a
+  // durable record of published URLs sitting in extension storage.
+  let publishedHashes = [];
 
   // Initialize
   await loadUrls();
@@ -53,7 +59,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const success = await publishPayload(payload);
     if (success) {
-      rememberPublished(publishedUrls);
+      await rememberPublished(publishedUrls);
       urls = [];
       globalDescriptionEl.value = '';
     }
@@ -66,13 +72,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function loadUrls() {
     return new Promise((resolve) => {
-      chrome.storage.local.get(['urlStack', 'globalDesc', 'recentlyPublished'], (result) => {
+      chrome.storage.local.get(['urlStack', 'globalDesc', 'publishedHashes'], (result) => {
         const stored = result.urlStack || [];
         // Migrate legacy string entries to {url, title} objects
         urls = stored.map(item =>
           typeof item === 'string' ? { url: item, title: '' } : item
         );
-        recentlyPublished = result.recentlyPublished || [];
+        publishedHashes = result.publishedHashes || [];
         if (result.globalDesc) {
           globalDescriptionEl.value = result.globalDesc;
         }
@@ -86,7 +92,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       chrome.storage.local.set({
         urlStack: urls,
         globalDesc: globalDescriptionEl.value,
-        recentlyPublished: recentlyPublished
+        publishedHashes: publishedHashes
       }, () => {
         resolve();
       });
@@ -99,16 +105,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function addCurrentTabUrl() {
     return new Promise((resolve) => {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
         if (tabs && tabs[0] && tabs[0].url) {
           const tabUrl = tabs[0].url;
           const tabTitle = tabs[0].title || '';
           // Don't add if it's already a chrome extension page or already in stack
           if (!tabUrl.startsWith('chrome://') && !tabUrl.startsWith('chrome-extension://')) {
-            if (recentlyPublished.includes(tabUrl)) {
+            const tabHash = await hashUrl(tabUrl);
+            if (publishedHashes.includes(tabHash)) {
               // Just published this page — skip it this once, then forget it so
               // reopening the popup later on the same page stacks it again.
-              recentlyPublished = recentlyPublished.filter(u => u !== tabUrl);
+              publishedHashes = publishedHashes.filter(h => h !== tabHash);
               saveUrls().then(resolve);
               return;
             }
@@ -200,7 +207,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const success = await publishPayload(payload);
           if (success) {
-            rememberPublished([itemUrl]);
+            await rememberPublished([itemUrl]);
             removeUrl(index);
           } else {
             itemEl.classList.remove('publishing');
@@ -231,11 +238,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // Truncated SHA-256 of a URL, used as the suppression key. Exact-match only —
+  // any difference in the URL, however small, yields a different hash.
+  async function hashUrl(url) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url));
+    return Array.from(new Uint8Array(digest))
+      .map(byte => byte.toString(16).padStart(2, '0'))
+      .join('')
+      .slice(0, URL_HASH_LENGTH);
+  }
+
   // Records URLs from a successful publish so addCurrentTabUrl() won't
   // immediately re-stack the page the user is on. Callers persist via saveUrls().
-  function rememberPublished(publishedUrls) {
-    const merged = [...recentlyPublished, ...publishedUrls];
-    recentlyPublished = [...new Set(merged)].slice(-MAX_REMEMBERED_PUBLISHED);
+  async function rememberPublished(publishedUrls) {
+    const hashes = await Promise.all(publishedUrls.map(url => hashUrl(url)));
+    const merged = [...publishedHashes, ...hashes];
+    publishedHashes = [...new Set(merged)].slice(-MAX_REMEMBERED_PUBLISHED);
   }
 
   function removeUrl(index) {
