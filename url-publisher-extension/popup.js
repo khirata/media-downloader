@@ -7,7 +7,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   const settingsBtn = document.getElementById('settingsBtn');
   const globalDescriptionEl = document.getElementById('globalDescription');
 
+  // Cap on how many just-published URLs we remember, so the list can't grow
+  // unbounded when the popup stays open across many publishes.
+  const MAX_REMEMBERED_PUBLISHED = 50;
+
   let urls = [];
+  // URLs from recent successful publishes. The current tab is skipped once if
+  // it appears here, so publishing doesn't immediately re-stack the page you
+  // are on when the popup reopens.
+  let recentlyPublished = [];
 
   // Initialize
   await loadUrls();
@@ -37,13 +45,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Publish all items at once with the global description
     const desc = globalDescriptionEl.value.trim();
-    const payload = { urls: urls.map(item => item.url) };
+    const publishedUrls = urls.map(item => item.url);
+    const payload = { urls: publishedUrls };
     if (desc) {
       payload.description = desc;
     }
 
     const success = await publishPayload(payload);
     if (success) {
+      rememberPublished(publishedUrls);
       urls = [];
       globalDescriptionEl.value = '';
     }
@@ -56,12 +66,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function loadUrls() {
     return new Promise((resolve) => {
-      chrome.storage.local.get(['urlStack', 'globalDesc'], (result) => {
+      chrome.storage.local.get(['urlStack', 'globalDesc', 'recentlyPublished'], (result) => {
         const stored = result.urlStack || [];
         // Migrate legacy string entries to {url, title} objects
         urls = stored.map(item =>
           typeof item === 'string' ? { url: item, title: '' } : item
         );
+        recentlyPublished = result.recentlyPublished || [];
         if (result.globalDesc) {
           globalDescriptionEl.value = result.globalDesc;
         }
@@ -74,7 +85,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     return new Promise((resolve) => {
       chrome.storage.local.set({
         urlStack: urls,
-        globalDesc: globalDescriptionEl.value
+        globalDesc: globalDescriptionEl.value,
+        recentlyPublished: recentlyPublished
       }, () => {
         resolve();
       });
@@ -93,6 +105,13 @@ document.addEventListener('DOMContentLoaded', async () => {
           const tabTitle = tabs[0].title || '';
           // Don't add if it's already a chrome extension page or already in stack
           if (!tabUrl.startsWith('chrome://') && !tabUrl.startsWith('chrome-extension://')) {
+            if (recentlyPublished.includes(tabUrl)) {
+              // Just published this page — skip it this once, then forget it so
+              // reopening the popup later on the same page stacks it again.
+              recentlyPublished = recentlyPublished.filter(u => u !== tabUrl);
+              saveUrls().then(resolve);
+              return;
+            }
             if (!urls.some(item => item.url === tabUrl)) {
               urls.unshift({ url: tabUrl, title: tabTitle });
               saveUrls().then(resolve);
@@ -173,13 +192,15 @@ document.addEventListener('DOMContentLoaded', async () => {
           publishBtn.textContent = '...';
 
           const desc = globalDescriptionEl.value.trim();
-          const payload = { urls: [urls[index].url] };
+          const itemUrl = urls[index].url;
+          const payload = { urls: [itemUrl] };
           if (desc) {
             payload.description = desc;
           }
 
           const success = await publishPayload(payload);
           if (success) {
+            rememberPublished([itemUrl]);
             removeUrl(index);
           } else {
             itemEl.classList.remove('publishing');
@@ -208,6 +229,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       saveUrls();
       renderList();
     }
+  }
+
+  // Records URLs from a successful publish so addCurrentTabUrl() won't
+  // immediately re-stack the page the user is on. Callers persist via saveUrls().
+  function rememberPublished(publishedUrls) {
+    const merged = [...recentlyPublished, ...publishedUrls];
+    recentlyPublished = [...new Set(merged)].slice(-MAX_REMEMBERED_PUBLISHED);
   }
 
   function removeUrl(index) {
