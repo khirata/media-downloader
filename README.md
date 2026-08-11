@@ -286,6 +286,8 @@ Both `radiko-downloader/.env` and `tver-downloader/.env` share a similar structu
 | `DOWNLOAD_DIR` | No | The absolute path on your host machine to save media. Defaults to `/tmp`. |
 | `PUID` / `PGID` | No | Your host machine's User and Group ID. Ensures downloaded files are owned by you instead of `root`. Find via `id -u` and `id -g`. |
 | `YT_DLP_ARGS` | No | Global arguments injected into every `yt-dlp` execution. |
+| `DOWNLOAD_MAX_ATTEMPTS` | No | **(Radiko only)** How many times each download is attempted before giving up. Defaults to `3`. Partial downloads are cleared between attempts. |
+| `DOWNLOAD_RETRY_DELAY` | No | **(Radiko only)** Seconds to wait between download attempts. Defaults to `10`. |
 | `FAILURE_NOTIFICATION_URL` | No | HTTP endpoint to POST a JSON failure report when a download fails (e.g., a Slack or Discord webhook URL). |
 | `SUCCESS_NOTIFICATION_URL` | No | HTTP endpoint to POST a JSON success report when a download succeeds (e.g., a Slack or Discord webhook URL). |
 | `CREATE_READY_FILE` | No | Set to `true` to emit a `<filename>.ready` marker file after each download completes, for use with external post-processing hooks. |

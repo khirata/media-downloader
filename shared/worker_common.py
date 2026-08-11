@@ -1,5 +1,6 @@
 import os
 import re
+import glob
 import json
 import subprocess
 import time
@@ -20,12 +21,19 @@ YT_DLP_ARGS_STR = os.environ.get('YT_DLP_ARGS', '')
 GLOBAL_YT_DLP_ARGS = shlex.split(YT_DLP_ARGS_STR) if YT_DLP_ARGS_STR else []
 FAILURE_NOTIFICATION_URL = os.environ.get('FAILURE_NOTIFICATION_URL', '')
 SUCCESS_NOTIFICATION_URL = os.environ.get('SUCCESS_NOTIFICATION_URL', '')
+DOWNLOAD_MAX_ATTEMPTS = max(1, int(os.environ.get('DOWNLOAD_MAX_ATTEMPTS', '3')))
+DOWNLOAD_RETRY_DELAY = max(0, int(os.environ.get('DOWNLOAD_RETRY_DELAY', '10')))
 
 sqs = boto3.client('sqs', region_name=AWS_REGION)
 
 _UNSAFE_FILENAME_CHARS = re.compile(r'[/\\:*?"<>|]')
 # Leave room for extensions and yt-dlp intermediate suffixes (e.g. .f251.webm.part)
 _MAX_FILENAME_STEM_BYTES = 180
+
+# Intermediate files yt-dlp leaves behind when a download is interrupted.
+# Completed outputs never carry these suffixes, so matching on them lets us
+# clear the wreckage of a failed run without touching finished downloads.
+_PARTIAL_DOWNLOAD_SUFFIX = re.compile(r'(?:-Frag\d+|\.ytdl|\.part|\.temp)$')
 
 
 def sanitize_description(desc):
@@ -44,6 +52,65 @@ def truncate_filename(name, max_bytes=_MAX_FILENAME_STEM_BYTES):
 
 def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
+
+
+def purge_partial_downloads(file_prefix):
+    """
+    Delete the intermediate files a failed yt-dlp run leaves in DOWNLOAD_DIR.
+
+    An interrupted fragmented download leaves fragment files
+    (``<name>.m4a-FragNN``) and resume state (``<name>.m4a.ytdl``) on disk.
+    On the next run yt-dlp tries to resume from them and sends a Range header,
+    which Radiko's CDN answers with HTTP 416 Requested Range Not Satisfiable --
+    so every later attempt fails instantly until they are cleared.
+
+    Completed outputs are deliberately left alone: runs using
+    ``--download-archive`` skip an already-recorded segment and rely on finding
+    the finished file still sitting in DOWNLOAD_DIR.
+
+    Returns the number of files removed.
+    """
+    removed = 0
+    for path in glob.glob(os.path.join(DOWNLOAD_DIR, f"{file_prefix}.*")):
+        if not _PARTIAL_DOWNLOAD_SUFFIX.search(path):
+            continue
+        try:
+            os.remove(path)
+            removed += 1
+        except OSError as e:
+            log(f"Could not remove partial download {path}: {e}")
+    if removed:
+        log(f"Removed {removed} partial download file(s) for {file_prefix}")
+    return removed
+
+
+def run_download(cmd, file_prefix, label):
+    """
+    Run a yt-dlp command, clearing partial downloads before every attempt and
+    retrying up to DOWNLOAD_MAX_ATTEMPTS times.
+
+    Radiko's CDN returns intermittent 5xx responses that abort an otherwise
+    healthy download, so a bounded retry recovers the recording instead of
+    losing it to a momentary blip. Recordings are small, which makes
+    re-downloading a whole segment cheap.
+
+    Returns True if yt-dlp exited 0 within the attempt budget.
+    """
+    for attempt in range(1, DOWNLOAD_MAX_ATTEMPTS + 1):
+        purge_partial_downloads(file_prefix)
+        try:
+            subprocess.run(cmd, check=True)
+            return True
+        except subprocess.CalledProcessError as e:
+            if attempt >= DOWNLOAD_MAX_ATTEMPTS:
+                log(f"Error downloading {label} after {attempt} attempt(s): {e}")
+                purge_partial_downloads(file_prefix)
+                return False
+            log(f"Error downloading {label} (attempt {attempt}/{DOWNLOAD_MAX_ATTEMPTS}): {e}")
+            if DOWNLOAD_RETRY_DELAY:
+                log(f"Retrying in {DOWNLOAD_RETRY_DELAY}s...")
+                time.sleep(DOWNLOAD_RETRY_DELAY)
+    return False
 
 
 def _extract_first_url(msg_body):

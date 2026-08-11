@@ -284,6 +284,8 @@ Radiko の録音については、複数セグメントの cron エントリを�
 | `DOWNLOAD_DIR` | いいえ | メディアを保存するホストマシン上の絶対パス。デフォルトは `/tmp` です。 |
 | `PUID` / `PGID` | いいえ | ホストマシンのユーザーおよびグループID。ダウンロードしたファイルが `root` ではなくあなたの所有になるよう調整します。`id -u` と `id -g` で確認できます。 |
 | `YT_DLP_ARGS` | いいえ | すべての `yt-dlp` 実行に注入されるグローバルな引数。 |
+| `DOWNLOAD_MAX_ATTEMPTS` | いいえ | **(Radikoのみ)** ダウンロードを試行する最大回数。デフォルトは `3` です。試行の合間に部分ダウンロードを削除します。 |
+| `DOWNLOAD_RETRY_DELAY` | いいえ | **(Radikoのみ)** ダウンロード試行の間隔（秒）。デフォルトは `10` です。 |
 | `FAILURE_NOTIFICATION_URL` | いいえ | ダウンロードが失敗したときに JSON の失敗レポートを POST する HTTP エンドポイント（Slack や Discord の Webhook URL など）。 |
 | `SUCCESS_NOTIFICATION_URL` | いいえ | ダウンロードが成功したときに JSON の成功レポートを POST する HTTP エンドポイント（Slack や Discord の Webhook URL など）。 |
 | `CREATE_READY_FILE` | いいえ | `true` に設定すると、ダウンロード完了後に `<ファイル名>.ready` マーカーファイルを生成します。外部の後処理フックと連携する際に使用します。 |

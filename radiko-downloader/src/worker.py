@@ -12,7 +12,7 @@ from googleapiclient.http import MediaFileUpload
 from worker_common import (
     DOWNLOAD_DIR, GLOBAL_YT_DLP_ARGS,
     log, sanitize_description, truncate_filename,
-    check_truncation, _finalize_file, run_main,
+    check_truncation, _finalize_file, run_main, run_download,
     _fetch_radiko_title,
 )
 
@@ -71,20 +71,17 @@ def record_radiko(station_id, start_times, description=None):
         # Append global (env) args only — never args from SQS message bodies
         cmd.extend(GLOBAL_YT_DLP_ARGS)
 
-        try:
-            log(f"Downloading segment {i+1}/{len(start_times)}: {start_time}")
-            subprocess.run(cmd, check=True)
-
-            search_pattern = os.path.join(DOWNLOAD_DIR, f"{file_prefix}.*")
-            files = glob.glob(search_pattern)
-            if files:
-                downloaded_files.append(files[0])
-            else:
-                log(f"No output file for {start_time} — already downloaded or yt-dlp skipped")
-                return "duplicate"
-        except subprocess.CalledProcessError as e:
-            log(f"Error downloading {start_time}: {e}")
+        log(f"Downloading segment {i+1}/{len(start_times)}: {start_time}")
+        if not run_download(cmd, file_prefix, start_time):
             return False
+
+        search_pattern = os.path.join(DOWNLOAD_DIR, f"{file_prefix}.*")
+        files = glob.glob(search_pattern)
+        if files:
+            downloaded_files.append(files[0])
+        else:
+            log(f"No output file for {start_time} — already downloaded or yt-dlp skipped")
+            return "duplicate"
 
     if not downloaded_files:
         return False
@@ -170,11 +167,8 @@ def download_podcast(url, description=None):
     cmd = ["yt-dlp", "--no-part", "-o", output_path_template, url]
     cmd.extend(GLOBAL_YT_DLP_ARGS)
 
-    try:
-        log(f"Downloading podcast episode: {url}")
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        log(f"Error downloading podcast {url}: {e}")
+    log(f"Downloading podcast episode: {url}")
+    if not run_download(cmd, file_prefix, f"podcast {url}"):
         return False
 
     files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{file_prefix}.*"))
