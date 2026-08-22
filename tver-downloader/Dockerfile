@@ -1,19 +1,16 @@
 FROM python:3.11-slim-bookworm
 
-# Install yt-dlp
-# Pinned version reference (currently using latest): 2026.03.03
-# SHA256: bc7b7b6a8a438571117efef98a0f9a12e634f6bbcd834896cddb6a1deedc9c4d
 RUN apt-get update && \
-    apt-get install -y curl ffmpeg && \
-    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
-    chmod 755 /usr/local/bin/yt-dlp && \
-    apt-get remove -y curl && \
-    apt-get autoremove -y && \
+    apt-get install -y ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install Python deps
+# Install Python deps. yt-dlp comes from requirements.txt and is deliberately
+# unpinned: YouTube breaks extraction every few weeks, so the newest release is
+# the working one. The version baked in here is only a floor -- the worker
+# upgrades yt-dlp on start (see YT_DLP_AUTO_UPDATE) so a container that has been
+# running for months does not keep serving a stale extractor.
 COPY tver-downloader/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

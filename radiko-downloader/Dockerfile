@@ -1,19 +1,17 @@
 FROM python:3.11-slim-bookworm
 
-# Install system dependencies (ffmpeg, cron)
+# Install system dependencies
 RUN apt-get update && \
-    apt-get install -y ffmpeg curl && \
+    apt-get install -y ffmpeg && \
     rm -rf /var/lib/apt/lists/*
-
-# Install yt-dlp
-# Pinned version reference (currently using latest): 2026.03.03
-# SHA256: bc7b7b6a8a438571117efef98a0f9a12e634f6bbcd834896cddb6a1deedc9c4d
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
-    chmod 755 /usr/local/bin/yt-dlp
 
 WORKDIR /app
 
-# Install Python deps
+# Install Python deps. yt-dlp and yt-dlp-rajiko come from requirements.txt and
+# are deliberately unpinned: upstream breaks every few weeks, so the newest
+# release is the working one. The versions baked in here are only a floor -- the
+# worker upgrades them on start (see YT_DLP_AUTO_UPDATE) so a container that has
+# been running for months does not keep serving a stale extractor.
 COPY radiko-downloader/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

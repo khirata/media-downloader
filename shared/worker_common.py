@@ -23,6 +23,8 @@ FAILURE_NOTIFICATION_URL = os.environ.get('FAILURE_NOTIFICATION_URL', '')
 SUCCESS_NOTIFICATION_URL = os.environ.get('SUCCESS_NOTIFICATION_URL', '')
 DOWNLOAD_MAX_ATTEMPTS = max(1, int(os.environ.get('DOWNLOAD_MAX_ATTEMPTS', '3')))
 DOWNLOAD_RETRY_DELAY = max(0, int(os.environ.get('DOWNLOAD_RETRY_DELAY', '10')))
+YT_DLP_AUTO_UPDATE = os.environ.get('YT_DLP_AUTO_UPDATE', 'true').lower() == 'true'
+YT_DLP_UPDATE_TIMEOUT = max(1, int(os.environ.get('YT_DLP_UPDATE_TIMEOUT', '300')))
 
 sqs = boto3.client('sqs', region_name=AWS_REGION)
 
@@ -291,11 +293,87 @@ def _finalize_file(final_file_path):
             log(f"Failed to create or chown ready marker file: {e}")
 
 
+def yt_dlp_version():
+    """Return the yt-dlp version string, or None if it cannot be determined."""
+    try:
+        result = subprocess.run(
+            ["yt-dlp", "--version"],
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        log(f"Could not determine yt-dlp version: {e}")
+        return None
+    return result.stdout.strip() or None
+
+
+def _yt_dlp_packages():
+    """
+    yt-dlp plus any installed yt-dlp plugin distributions (e.g. yt-dlp-rajiko).
+
+    Plugins hook into yt-dlp internals, so upgrading yt-dlp while leaving a
+    plugin behind can break the very extractor the plugin provides. Discovering
+    them by name prefix keeps the two in step without each worker having to
+    declare its own plugin list.
+    """
+    packages = {"yt-dlp"}
+    try:
+        from importlib.metadata import distributions
+        for dist in distributions():
+            name = dist.metadata.get("Name") or ""
+            if name.startswith("yt-dlp-"):
+                packages.add(name)
+    except Exception as e:
+        log(f"Could not enumerate yt-dlp plugins, upgrading yt-dlp alone: {e}")
+    return sorted(packages)
+
+
+def ensure_yt_dlp_current():
+    """
+    Upgrade yt-dlp (and its plugins) before the worker starts accepting jobs.
+
+    YouTube reworks its player and streaming protocol every few weeks, and each
+    change breaks extraction until yt-dlp ships a fix. The image only ever
+    contains whichever release existed when it was built, so a long-running
+    container silently rots: downloads begin failing with extractor errors such
+    as "The page needs to be reloaded." while nothing in this repo has changed.
+    Refreshing at start makes `docker compose restart` enough to recover, with
+    no image rebuild.
+
+    Upgrade failures are deliberately non-fatal. A worker that cannot reach
+    PyPI is still more useful running the version baked into the image than not
+    running at all.
+    """
+    before = yt_dlp_version()
+
+    if not YT_DLP_AUTO_UPDATE:
+        log(f"yt-dlp auto-update disabled; running {before or 'unknown version'}")
+        return
+
+    packages = _yt_dlp_packages()
+    log(f"Upgrading {', '.join(packages)} (currently {before or 'unknown version'})...")
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--no-cache-dir", "--upgrade", *packages],
+            capture_output=True, text=True, check=True, timeout=YT_DLP_UPDATE_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        log(f"yt-dlp upgrade failed, continuing with {before or 'unknown version'}: {e}")
+        return
+
+    after = yt_dlp_version()
+    if after and before and after != before:
+        log(f"yt-dlp upgraded {before} -> {after}")
+    else:
+        log(f"yt-dlp up to date at {after or 'unknown version'}")
+
+
 def run_main(worker_name, process_message_fn):
     """SQS long-poll loop. Delegates message handling to process_message_fn."""
     if not SQS_QUEUE_URL:
         log("Error: SQS_QUEUE_URL is not set.")
         sys.exit(1)
+
+    ensure_yt_dlp_current()
 
     log(f"Worker started. Listening to {SQS_QUEUE_URL}...")
 

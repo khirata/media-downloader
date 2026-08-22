@@ -8,6 +8,7 @@ from worker_common import (
     DOWNLOAD_DIR, GLOBAL_YT_DLP_ARGS,
     log, sanitize_description, truncate_filename,
     check_truncation, _finalize_file, run_main,
+    ensure_yt_dlp_current, yt_dlp_version,
 )
 
 
@@ -69,7 +70,9 @@ def record_video(url, description=None):
 
         return True, title
     except subprocess.CalledProcessError as e:
-        log(f"Error downloading {url}: {e}")
+        # Extractor breakage is the usual cause here and is invisible in the
+        # exit code alone, so record which yt-dlp produced it.
+        log(f"Error downloading {url} (yt-dlp {yt_dlp_version() or 'unknown'}): {e}")
         for f in (filepath_log, title_log):
             if os.path.exists(f):
                 os.remove(f)
@@ -101,6 +104,7 @@ def process_message(msg_body):
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         url = sys.argv[1]
+        ensure_yt_dlp_current()
         log(f"Manual override: downloading {url}")
         success, _ = record_video(url)
     else:
