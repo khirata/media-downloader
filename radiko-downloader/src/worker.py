@@ -13,7 +13,7 @@ from worker_common import (
     DOWNLOAD_DIR, GLOBAL_YT_DLP_ARGS,
     log, sanitize_description, truncate_filename,
     check_truncation, _finalize_file, run_main, run_download,
-    _fetch_radiko_title,
+    _fetch_radiko_title, ensure_yt_dlp_current,
 )
 
 GDRIVE_FOLDER_ID = os.environ.get('GDRIVE_FOLDER_ID')
@@ -246,6 +246,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 2:
         station_id = sys.argv[1]
         start_times = sys.argv[2:]
+        ensure_yt_dlp_current()
         log(f"Manual override: {station_id} combining segments: {start_times}")
         record_radiko(station_id, start_times)
     else:
