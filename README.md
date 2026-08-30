@@ -257,6 +257,38 @@ curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
   -d '{"urls": ["https://tver.jp/episodes/ex4mple"]}'
 ```
 
+#### Forcing a Re-download
+
+A TVer or YouTube URL you have already downloaded is normally skipped: `yt-dlp`
+sees the finished file still sitting in your download directory and leaves it
+alone. Pass `"force": true` to download it again anyway — useful when the first
+attempt produced a bad file, or when you want a different quality.
+
+```bash
+curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{"urls": ["https://tver.jp/episodes/ex4mple"], "force": true}'
+```
+
+The Chrome extension exposes the same flag as a **Force re-download** checkbox,
+which resets each time the popup closes.
+
+A few things worth knowing:
+
+- **It only applies to TVer and YouTube.** Radiko recordings are small and the
+  Radiko worker re-downloads every time regardless, so it has no duplicate
+  prevention to override. The flag is dropped for Radiko URLs.
+- **The existing file is deleted before the download starts** (`--force-overwrites`),
+  so a forced attempt that then fails leaves you with neither the old file nor a
+  new one.
+- **Only a JSON boolean `true` is accepted.** Anything else is rejected with a
+  400. The flag selects a fixed set of `yt-dlp` arguments; no value from the
+  request is ever passed through to `yt-dlp` itself.
+- The duplicate check is filename-based. Moving a finished file out of the
+  download directory, or publishing the same URL with a different
+  `description`, produces a new filename and re-downloads without the flag.
+
 #### Automating with Cron
 For automatic, recurring recordings (like a weekly radio show), simply add the exact `curl` command above to your system's `crontab`.
 
