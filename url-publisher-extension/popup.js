@@ -6,6 +6,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const addManualBtn = document.getElementById('addManualBtn');
   const settingsBtn = document.getElementById('settingsBtn');
   const globalDescriptionEl = document.getElementById('globalDescription');
+  // Force re-download. Deliberately not persisted alongside urlStack/globalDesc:
+  // a flag that survived the popup closing would silently re-download everything
+  // on every later publish. It resets when the popup closes and after Publish All.
+  const forceRedownloadEl = document.getElementById('forceRedownload');
 
   // Cap on how many just-published URLs we remember, so the list can't grow
   // unbounded when the popup stays open across many publishes.
@@ -56,12 +60,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (desc) {
       payload.description = desc;
     }
+    if (forceRedownloadEl.checked) {
+      payload.force = true;
+    }
 
     const success = await publishPayload(payload);
     if (success) {
       await rememberPublished(publishedUrls);
       urls = [];
       globalDescriptionEl.value = '';
+      forceRedownloadEl.checked = false;
     }
 
     await saveUrls();
@@ -203,6 +211,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           const payload = { urls: [itemUrl] };
           if (desc) {
             payload.description = desc;
+          }
+          if (forceRedownloadEl.checked) {
+            payload.force = true;
           }
 
           const success = await publishPayload(payload);
