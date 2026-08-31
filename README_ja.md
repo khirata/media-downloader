@@ -1,6 +1,6 @@
 # サーバーレスメディアダウンローダー ([English](./README.md))
 
-このリポジトリは、ストリーミングメディア（Radiko のラジオ番組や TVer・YouTube の動画など）をダウンロードし、必要に応じて結合し、最終的にローカルに保存するか Google ドライブへ安全にアップロードするための、自動化されたイベント駆動型の録画・録音システムです。
+このリポジトリは、ストリーミングメディア（Radiko・らじる★らじる のラジオ番組や TVer・YouTube の動画など）をダウンロードし、必要に応じて結合し、最終的にローカルに保存するか Google ドライブへ安全にアップロードするための、自動化されたイベント駆動型の録画・録音システムです。
 
 複数のコンポーネントが連携するモノレポ構成となっています：
 
@@ -27,12 +27,12 @@ graph TD
     end
 
     subgraph Queues ["📥 メッセージキュー"]
-        SQS_R["Radiko SQS キュー<br/>(radiko-downloader/)"]:::queue
+        SQS_R["ラジオ SQS キュー<br/>(radiko-downloader/)"]:::queue
         SQS_T["動画 SQS キュー<br/>(tver-downloader/)"]:::queue
     end
 
     subgraph Workers ["⚙️ ダウンローダー"]
-        WORK_R["Radiko Python ワーカ<br/>(radiko-downloader/)"]:::worker
+        WORK_R["Radiko / らじる Python ワーカ<br/>(radiko-downloader/)"]:::worker
         WORK_T["TVer/YouTube Python ワーカ<br/>(tver-downloader/)"]:::worker
     end
     
@@ -61,8 +61,8 @@ graph TD
 ## 🗂️ プロジェクト構成
 
 * **[url-publisher-extension](./url-publisher-extension/)**: ブラウザから URL をキャプチャし、API ゲートウェイに送信する Chrome 拡張機能。
-* **[api-gw](./api-gw/)**: 着信リクエストを検証し、中央の AWS SNS トピックへ JSON ペイロードとしてディスパッチする AWS API Gateway と Lambda 関数。トラフィックルーターとして機能します（例: `radiko.jp` URL は Radiko SQS キューへ、`tver.jp` や `youtube.com` URL は TVer/動画 SQS キューへルーティング）。
-* **[radiko-downloader](./radiko-downloader/)**: Radiko 専用の SQS キューを継続的にポーリングする Docker 化された Python ワーカ。`yt-dlp` でセグメントをダウンロードし、`ffmpeg` でシームレスに結合し、Google ドライブ API で最終的な `.m4a` ファイルをアップロードします。
+* **[api-gw](./api-gw/)**: 着信リクエストを検証し、中央の AWS SNS トピックへ JSON ペイロードとしてディスパッチする AWS API Gateway と Lambda 関数。トラフィックルーターとして機能します（例: `radiko.jp` と NHK らじる★らじる の URL はラジオ SQS キューへ、`tver.jp` や `youtube.com` URL は TVer/動画 SQS キューへルーティング）。
+* **[radiko-downloader](./radiko-downloader/)**: Radiko と らじる★らじる（NHK ラジオ）用の SQS キューを継続的にポーリングする Docker 化された Python ワーカ。`yt-dlp` でセグメントをダウンロードし、`ffmpeg` でシームレスに結合し、Google ドライブ API で最終的な `.m4a` ファイルをアップロードします。
 * **[tver-downloader](./tver-downloader/)**: TVer や YouTube 用の SQS キューを継続的にポーリングする軽量な Docker 化された Python ワーカ。`yt-dlp` を使用して動画をローカルにダウンロードします。
 
 ## ⚙️ 要件
@@ -253,6 +253,46 @@ curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
   -H "Content-Type: application/json" \
   -H "x-api-key: YOUR_API_KEY" \
   -d '{"urls": ["https://tver.jp/episodes/ex4mple"]}'
+```
+
+#### らじる★らじる（NHK ラジオ）
+
+NHK の URL は同じワーカが処理します。追加の設定は不要です：
+
+```bash
+curl -X POST "$API_ENDPOINT" \
+  -H "x-api-key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"urls": ["https://www.nhk.jp/p/rs/YRLK72JZ7Q/episode/re/2J9Y56YWPN/"]}'
+```
+
+受け付ける URL は次の 3 種類です：
+
+| URL | ダウンロード対象 |
+| --- | --- |
+| `www.nhk.jp/p/[<slug>/]rs/<series>/episode/re/<episode>/` | その 1 エピソード |
+| `www.nhk.jp/p/[<slug>/]rs/<series>/` | 聞き逃しにある全エピソード |
+| `www.nhk.or.jp/radio/{player/ondemand,ondemand/detail}.html?p=…` | プレーヤー URL が指す番組 |
+
+`www.nhk.jp` のリンクはダウンロード前にプレーヤー形式へ解決されるため、
+ブラウザに表示されている URL をそのまま配信できます。
+
+Radiko との違いが 2 点あります：
+
+* **聞き逃しは約 1 週間で公開終了** となり、Radiko のタイムフリーのように
+  時刻で番組を指定する方法はありません。公開終了後に投入した URL は別の番組を
+  録音してしまうことはなく失敗するため、らじる用の `cron` ヘルパーはありません。
+* **NHK にはエリアフリー相当の仕組みがありません。** yt-dlp の該当エクストラクタは
+  日本国内限定のため、ワーカのホストが日本国内にある必要があります。聞き逃しは
+  国内での地域制限はありません（地域制限があるのはライブ配信のみで、ライブは非対応です）。
+
+ファイル名は Radiko と同じ `{開始時刻}-{放送局}-{タイトル}.m4a` 形式
+（開始時刻は JST）なので、両者を同じフォルダにまとめられます：
+
+```
+202603011300-FMJ-番組名.m4a          # Radiko
+202608310330-NHKFM-カルチャーラジオ….m4a   # らじる
+202608310020-NHKAM-日曜討論.m4a        # らじる
 ```
 
 #### Cron による自動化
