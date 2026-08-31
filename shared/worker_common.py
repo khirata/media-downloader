@@ -73,7 +73,12 @@ def purge_partial_downloads(file_prefix):
     Returns the number of files removed.
     """
     removed = 0
-    for path in glob.glob(os.path.join(DOWNLOAD_DIR, f"{file_prefix}.*")):
+    # Matched as a prefix rather than an exact stem: a らじる series URL expands
+    # into one file per episode, whose names are only known after extraction, so
+    # the caller can name a common prefix but not each stem. Widening is safe
+    # because the suffix check below -- not the glob -- is what authorises a
+    # delete, and the worker handles one SQS message at a time.
+    for path in glob.glob(os.path.join(DOWNLOAD_DIR, f"{file_prefix}*")):
         if not _PARTIAL_DOWNLOAD_SUFFIX.search(path):
             continue
         try:
@@ -183,6 +188,223 @@ def _extract_radiko_title_from_message(msg_body):
     if station_id and start_times:
         return _fetch_radiko_title(station_id, start_times[0])
     return None
+
+
+# ==========================================
+# らじる★らじる (NHK Radio) URL handling
+# ==========================================
+
+# yt-dlp's NhkRadiru extractor only matches these two www.nhk.or.jp player URLs.
+_RADIRU_ONDEMAND_RE = re.compile(
+    r'^https?://www\.nhk\.or\.jp/radio/(?:player/ondemand|ondemand/detail)\.html\?p=', re.I)
+_RADIRU_NEWS_RE = re.compile(r'^https?://www\.nhk\.or\.jp/radionews/?(?:$|[?#])', re.I)
+
+# The NHK ONE site people actually browse. `rs` is deliberate: nhk.jp uses `ts`
+# for television series, and those must not be routed to the radio worker.
+_RADIRU_NHKJP_RE = re.compile(
+    r'^https?://www\.nhk\.jp/p/(?:[^/?#]+/)?rs/(?P<series>[\da-zA-Z]+)'
+    r'(?:/episode/re/(?P<episode>[\da-zA-Z]+))?(?:[/?#]|$)', re.I)
+
+_RADIKO_PODCAST_RE = re.compile(r'^https?://(?:www\.)?radiko\.jp/podcast/', re.I)
+_RADIKO_TS_RE = re.compile(r'^https?://(?:www\.)?radiko\.jp/#!/ts/', re.I)
+
+# NHK names the service in prose, and the wording differs between yt-dlp's two
+# metadata paths: the extended-metadata call yields "NHK FM・東京" / "NHK AM・東京",
+# while the fallback built from the series API's radio_broadcast field yields
+# "NHK FM" / "NHK R1" / "NHK R1,FM". The news API contributes "NHK AM" again.
+# Map them all onto a short code so filenames stay parallel with Radiko's
+# station ids.
+#
+# FM is tested first on purpose: a simulcast reports radio_broadcast "R1,FM",
+# and resolving that to NHKFM agrees with what the extended metadata returns for
+# the same programme (checked against NHKのど自慢).
+#
+# There is no NHKR2 code. ラジオ第2 was folded into FM in 2025, and it could not
+# be reached even for old recordings -- 聞き逃し only carries about a week.
+_RADIRU_STATION_PATTERNS = (
+    ('NHKFM', re.compile(r'FM')),
+    ('NHKAM', re.compile(r'AM|ラジオ第1|R1')),
+)
+
+# yt-dlp prints this for a field the extractor did not populate.
+_YT_DLP_NA = 'NA'
+
+
+def classify_radio_url(url):
+    """
+    Identify which download path a queued radio URL belongs to.
+
+    Returns 'radiko_podcast', 'radiru', 'radiko_ts', or None when the URL is not
+    something the radio worker knows how to fetch.
+    """
+    if not isinstance(url, str):
+        return None
+    if _RADIKO_PODCAST_RE.match(url):
+        return 'radiko_podcast'
+    if _RADIKO_TS_RE.match(url):
+        return 'radiko_ts'
+    if (_RADIRU_ONDEMAND_RE.match(url)
+            or _RADIRU_NEWS_RE.match(url)
+            or _RADIRU_NHKJP_RE.match(url)):
+        return 'radiru'
+    return None
+
+
+def radiru_station_code(channel):
+    """
+    Short station code for a らじる channel name, mirroring Radiko station ids.
+
+    Falls back to the sanitised channel name so an unrecognised service still
+    produces a usable filename rather than silently losing the station.
+    """
+    if not channel or channel == _YT_DLP_NA:
+        return 'NHK'
+    for code, pattern in _RADIRU_STATION_PATTERNS:
+        if pattern.search(channel):
+            return code
+    return truncate_filename(sanitize_description(channel))
+
+
+def radiru_filename(start_jst, channel, title, ext, description=None):
+    """
+    Build the final filename for a らじる episode.
+
+    Mirrors the Radiko time-shift convention -- {start}-{station}-{title}.{ext},
+    with start as 12 JST digits -- so recordings from both sources sort together
+    in the same folder.
+
+    The start time also keeps a series download collision-free: every episode
+    carries its own broadcast time, so even a shared `description` yields
+    distinct names.
+    """
+    parts = []
+    if start_jst and start_jst != _YT_DLP_NA:
+        parts.append(start_jst)
+    parts.append(radiru_station_code(channel))
+
+    label = description or (title if title != _YT_DLP_NA else '') or ''
+    label = truncate_filename(sanitize_description(label))
+    if label:
+        parts.append(label)
+
+    return f"{'-'.join(parts)}.{ext}"
+
+
+# Fields captured from each completed download, tab-delimited on one line.
+#
+# release_timestamp is the broadcast start -- the direct analogue of Radiko's
+# start_time. yt-dlp renders timestamps in UTC, so +32400 shifts it to JST.
+# Without that offset every programme airing before 09:00 JST would be filed a
+# day early, which is most of NHK's 語学 and 深夜 lineup. (yt-dlp's upload_date
+# and release_date have the same UTC problem and cannot be corrected in a
+# template, which is why neither is used here.)
+RADIRU_FIELDS_TEMPLATE = (
+    "after_move:%(filepath)s\t%(release_timestamp+32400>%Y%m%d%H%M)s"
+    "\t%(channel)s\t%(title)s"
+)
+
+
+def parse_radiru_fields(text):
+    """
+    Parse the tab-delimited lines yt-dlp wrote for RADIRU_FIELDS_TEMPLATE.
+
+    Returns a list of (path, start_jst, channel, title) tuples.
+
+    Deduplicates by path, keeping the last line seen for each: yt-dlp appends to
+    this file, and run_download reruns the whole command on retry, so an attempt
+    that failed part way through leaves lines behind for the entries it did
+    finish.
+    """
+    entries = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split('\t')
+        if len(parts) < 4:
+            log(f"Skipping malformed yt-dlp field line: {line!r}")
+            continue
+        # Rejoin any trailing fields: a title is free text and could contain a tab.
+        path, start, channel = parts[0], parts[1], parts[2]
+        title = '\t'.join(parts[3:])
+        entries[path] = (path, start, channel, title)
+    return list(entries.values())
+
+
+def _fetch_radiru_corner(page_url, series_id):
+    """
+    Read the corner id out of an nhk.jp programme page.
+
+    A らじる programme is addressed as <series>_<corner>, but an nhk.jp URL
+    carries only the series id. The page embeds ondemand.html links that supply
+    the missing half. Returns None on any failure; never raises.
+    """
+    try:
+        req = urllib.request.Request(
+            page_url, headers={"User-Agent": "Mozilla/5.0 (compatible; media-downloader/1.0)"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode('utf-8', errors='replace')
+    except Exception as e:
+        log(f"Failed to fetch nhk.jp page {page_url}: {e}")
+        return None
+
+    match = re.search(rf'ondemand\.html\?p={re.escape(series_id)}_([\da-zA-Z]+)', html)
+    if not match:
+        log(f"No ondemand link found on {page_url}")
+        return None
+    return match.group(1)
+
+
+def _find_radiru_headline(series_url, episode_id):
+    """
+    Map an nhk.jp episode id to the headline id that addresses it on らじる.
+
+    Scraping cannot do this: every episode page of a series lists that same full
+    set of ondemand links. yt-dlp's episode_id *is* the nhk.jp `re/` id, so a
+    simulate pass over the series resolves it. Returns None if the episode is not
+    among those currently available (聞き逃し expires after about a week).
+    """
+    cmd = ["yt-dlp", "--ignore-config", "-s", "--print", "%(id)s\t%(episode_id)s", series_url]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180, check=True)
+    except (OSError, subprocess.SubprocessError) as e:
+        log(f"Failed to list episodes for {series_url}: {e}")
+        return None
+
+    for line in result.stdout.splitlines():
+        entry_id, _, entry_episode = line.strip().partition('\t')
+        if entry_episode == episode_id:
+            return entry_id.rsplit('_', 1)[-1]
+
+    log(f"Episode {episode_id} is not among the available episodes of {series_url}")
+    return None
+
+
+def resolve_radiru_url(url):
+    """
+    Rewrite an nhk.jp programme URL into the らじる form yt-dlp understands.
+
+    URLs already on www.nhk.or.jp are returned unchanged. Returns None when an
+    nhk.jp URL cannot be resolved, so the caller can fail the job cleanly rather
+    than handing yt-dlp a URL no extractor matches.
+    """
+    match = _RADIRU_NHKJP_RE.match(url)
+    if not match:
+        return url
+
+    series_id, episode_id = match.group('series'), match.group('episode')
+
+    corner_id = _fetch_radiru_corner(url, series_id)
+    if not corner_id:
+        return None
+
+    series_url = f"https://www.nhk.or.jp/radio/ondemand/detail.html?p={series_id}_{corner_id}"
+    if not episode_id:
+        return series_url
+
+    headline_id = _find_radiru_headline(series_url, episode_id)
+    if not headline_id:
+        return None
+    return f"https://www.nhk.or.jp/radio/player/ondemand.html?p={series_id}_{corner_id}_{headline_id}"
 
 
 def _build_webhook_payload(url, payload_dict):
