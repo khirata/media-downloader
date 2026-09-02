@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "URL Publisher",
   "version": "1.0",
-  "version_name": "20260830T12:57:07-0700",
+  "version_name": "20260901T17:36:36-0700",
   "description": "Stack URLs and publish them to an AWS SNS topic.",
   "permissions": [
     "storage",

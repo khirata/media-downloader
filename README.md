@@ -1,6 +1,6 @@
 # Serverless Media Downloader ([日本語](./README_ja.md))
 
-This repository contains an automated, event-driven media recording system designed to download streaming media (such as Radiko radio programs and TVer/YouTube videos), stitch them together if necessary, and ultimately save them locally or upload them securely to Google Drive.
+This repository contains an automated, event-driven media recording system designed to download streaming media (such as Radiko and らじる★らじる radio programs, and TVer/YouTube videos), stitch them together if necessary, and ultimately save them locally or upload them securely to Google Drive.
 
 It is structured as a monorepo housing several interconnected components:
 
@@ -27,12 +27,12 @@ graph TD
     end
 
     subgraph Queues ["📥 Message Queues"]
-        SQS_R["Radiko SQS Queue<br/>(radiko-downloader/)"]:::queue
+        SQS_R["Radio SQS Queue<br/>(radiko-downloader/)"]:::queue
         SQS_T["Video SQS Queue<br/>(tver-downloader/)"]:::queue
     end
 
     subgraph Workers ["⚙️ Downloaders"]
-        WORK_R["Radiko Python Worker<br/>(radiko-downloader/)"]:::worker
+        WORK_R["Radiko / らじる Python Worker<br/>(radiko-downloader/)"]:::worker
         WORK_T["TVer/YouTube Python Worker<br/>(tver-downloader/)"]:::worker
     end
     
@@ -61,8 +61,8 @@ graph TD
 ## 🗂️ Projects
 
 * **[url-publisher-extension](./url-publisher-extension/)**: A Chrome extension that captures URLs from the browser and sends them to the API Gateway.
-* **[api-gw](./api-gw/)**: An AWS API Gateway and Lambda function that validates incoming requests and dispatches them as JSON payloads to a central AWS SNS topic. It acts as the traffic router (e.g., routing `radiko.jp` URLs to the Radiko SQS queue, and `tver.jp` or `youtube.com` URLs to the TVer/Video SQS queue).
-* **[radiko-downloader](./radiko-downloader/)**: A Dockerized Python worker that continuously polls its dedicated SQS queue for Radiko URLs. It uses `yt-dlp` to download the segments, `ffmpeg` to concatenate them seamlessly, and the Google Drive API to upload the final `.m4a` file. For scheduling recurring recordings via `cron`, see [radiko-downloader/SCHEDULING.md](./radiko-downloader/SCHEDULING.md).
+* **[api-gw](./api-gw/)**: An AWS API Gateway and Lambda function that validates incoming requests and dispatches them as JSON payloads to a central AWS SNS topic. It acts as the traffic router (e.g., routing `radiko.jp` and NHK らじる★らじる URLs to the Radio SQS queue, and `tver.jp` or `youtube.com` URLs to the TVer/Video SQS queue).
+* **[radiko-downloader](./radiko-downloader/)**: A Dockerized Python worker that continuously polls its dedicated SQS queue for Radiko and らじる★らじる (NHK Radio) URLs. It uses `yt-dlp` to download the segments, `ffmpeg` to concatenate them seamlessly, and the Google Drive API to upload the final `.m4a` file. For scheduling recurring recordings via `cron`, see [radiko-downloader/SCHEDULING.md](./radiko-downloader/SCHEDULING.md).
 * **[tver-downloader](./tver-downloader/)**: A lightweight Dockerized Python worker that polls its SQS queue for Video (TVer/YouTube) URLs, using `yt-dlp` to download the videos locally.
 
 ## ⚙️ General Requirements
@@ -257,6 +257,48 @@ curl -X POST "https://YOUR_API_ENDPOINT/prod/publish" \
   -d '{"urls": ["https://tver.jp/episodes/ex4mple"]}'
 ```
 
+#### らじる★らじる (NHK Radio)
+
+NHK URLs go to the same worker and need no extra configuration:
+
+```bash
+curl -X POST "$API_ENDPOINT" \
+  -H "x-api-key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"urls": ["https://www.nhk.jp/p/rs/YRLK72JZ7Q/episode/re/2J9Y56YWPN/"]}'
+```
+
+Three URL shapes are accepted:
+
+| URL | Downloads |
+| --- | --- |
+| `www.nhk.jp/p/[<slug>/]rs/<series>/episode/re/<episode>/` | that one episode |
+| `www.nhk.jp/p/[<slug>/]rs/<series>/` | every episode currently in 聞き逃し |
+| `www.nhk.or.jp/radio/{player/ondemand,ondemand/detail}.html?p=…` | as addressed by the player URL |
+
+`www.nhk.jp` links are resolved to the player form before download, so the URL
+the browser is showing can be published as-is.
+
+Two differences from Radiko are worth knowing:
+
+* **聞き逃し expires after about a week**, and there is no way to address a
+  programme by timestamp the way Radiko time-shift allows. A URL queued after
+  the window closes fails rather than recording something else, so there is no
+  `cron` helper for らじる.
+* **NHK does not offer an areafree equivalent.** yt-dlp marks these extractors
+  JP-only, so the worker host has to be in Japan. On-demand is not restricted by
+  region *within* Japan — only live simulcast is, and live is not supported here.
+
+Recordings are named with the same convention as Radiko —
+`{start}-{station}-{title}.m4a`, with the start time in JST — so both sources
+file together:
+
+```
+202603011300-FMJ-番組名.m4a          # Radiko
+202608310330-NHKFM-カルチャーラジオ….m4a   # らじる
+202608310020-NHKAM-日曜討論.m4a        # らじる
+```
+
 #### Forcing a Re-download
 
 A TVer or YouTube URL you have already downloaded is normally skipped: `yt-dlp`
@@ -276,9 +318,9 @@ which resets each time the popup closes.
 
 A few things worth knowing:
 
-- **It only applies to TVer and YouTube.** Radiko recordings are small and the
-  Radiko worker re-downloads every time regardless, so it has no duplicate
-  prevention to override. The flag is dropped for Radiko URLs.
+- **It only applies to TVer and YouTube.** Radiko and らじる★らじる recordings
+  are small and the radio worker re-downloads every time regardless, so it has
+  no duplicate prevention to override. The flag is dropped for those URLs.
 - **The existing file is deleted before the download starts** (`--force-overwrites`),
   so a forced attempt that then fails leaves you with neither the old file nor a
   new one.

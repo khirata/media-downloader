@@ -59,7 +59,7 @@ exports.handler = async (event) => {
 
         // Bucket URLs by type; Radiko URLs are grouped before publishing
         for (const u of urlList) {
-            if (u.includes('radiko.jp')) {
+            if (u.includes('radiko.jp') || isRadiruUrl(u)) {
                 radikoUrls.push(u);
             } else if (u.includes('tver.jp')) {
                 const result = await handleTverUrl(u, topicArn, snsClient, force === true);
@@ -73,9 +73,10 @@ exports.handler = async (event) => {
         }
 
         // Group same-station Radiko time-shift URLs into one message per station.
-        // `force` is deliberately not forwarded: the Radiko worker has no
-        // duplicate prevention to override, so the flag would be a message field
-        // that nothing honours.
+        // `force` is deliberately not forwarded: the radio worker downloads to a
+        // temporary prefix it renames afterwards — for Radiko and らじる alike —
+        // so it has no duplicate prevention to override, and the flag would be a
+        // message field that nothing honours.
         if (radikoUrls.length > 0) {
             const results = await handleRadikoUrls(radikoUrls, description, topicArn, snsClient);
             publishResults.push(...results);
@@ -121,6 +122,21 @@ function getCorsHeaders() {
     };
 }
 
+// らじる★らじる (NHK Radio). The first two forms are what yt-dlp's NhkRadiru
+// extractor matches; the third is the NHK ONE site people actually browse, which
+// the worker resolves into one of the first two. Matching `rs` specifically is
+// deliberate: nhk.jp uses `ts` for television series, which this worker cannot
+// handle and must not swallow.
+const RADIRU_ONDEMAND_REGEX = /^https?:\/\/www\.nhk\.or\.jp\/radio\/(?:player\/ondemand|ondemand\/detail)\.html\?p=/i;
+const RADIRU_NEWS_REGEX = /^https?:\/\/www\.nhk\.or\.jp\/radionews\/?(?:$|[?#])/i;
+const RADIRU_SERIES_REGEX = /^https?:\/\/www\.nhk\.jp\/p\/(?:[^/?#]+\/)?rs\/[\dA-Za-z]+(?:[/?#]|$)/i;
+
+function isRadiruUrl(u) {
+    return RADIRU_ONDEMAND_REGEX.test(u)
+        || RADIRU_NEWS_REGEX.test(u)
+        || RADIRU_SERIES_REGEX.test(u);
+}
+
 async function handleRadikoUrls(urls, description, topicArn, snsClient) {
     const radikoRegex = /^https?:\/\/radiko\.jp\/#!\/ts\/([A-Za-z0-9_-]+)\/(\d{14})/;
     const podcastRegex = /^https?:\/\/radiko\.jp\/podcast\/episodes\//;
@@ -128,6 +144,24 @@ async function handleRadikoUrls(urls, description, topicArn, snsClient) {
     const publishResults = [];
 
     for (const u of urls) {
+        // Shares the Radiko queue (and so the `radiko` type) because the same
+        // worker handles it — no SNS filter policy change needed.
+        if (isRadiruUrl(u)) {
+            const payload = { type: 'radiko', url: u };
+            if (description) payload.description = description;
+
+            const params = {
+                TopicArn: topicArn,
+                Message: JSON.stringify(payload),
+                Subject: 'Radiru Download Scheduled'
+            };
+
+            const result = await snsClient.send(new PublishCommand(params));
+            console.log(`Successfully published Radiru message ID: ${result.MessageId} for URL ${u}`);
+            publishResults.push({ type: 'radiru', url: u, messageId: result.MessageId });
+            continue;
+        }
+
         if (podcastRegex.test(u)) {
             const payload = { type: 'radiko', url: u };
             if (description) payload.description = description;

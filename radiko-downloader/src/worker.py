@@ -3,6 +3,7 @@ import subprocess
 import json
 import glob
 import sys
+import tempfile
 
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -10,10 +11,11 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 from worker_common import (
-    DOWNLOAD_DIR, GLOBAL_YT_DLP_ARGS,
+    DOWNLOAD_DIR, GLOBAL_YT_DLP_ARGS, RADIRU_FIELDS_TEMPLATE,
     log, sanitize_description, truncate_filename,
     check_truncation, _finalize_file, run_main, run_download,
     _fetch_radiko_title, ensure_yt_dlp_current,
+    classify_radio_url, parse_radiru_fields, radiru_filename, resolve_radiru_url,
 )
 
 GDRIVE_FOLDER_ID = os.environ.get('GDRIVE_FOLDER_ID')
@@ -157,6 +159,39 @@ def record_radiko(station_id, start_times, description=None):
     return False
 
 
+def _deliver_file(final_file_path, final_file_name):
+    """
+    Verify, upload, and clean up one finished recording.
+
+    Returns True when the file is safely delivered — uploaded to Drive, or kept
+    locally when Drive is not configured — and False when it should be treated
+    as a failed download. Either way nothing is left behind on disk.
+    """
+    if not check_truncation(final_file_path):
+        log("Aborting: truncated file detected. Cleaning up.")
+        if os.path.exists(final_file_path):
+            os.remove(final_file_path)
+        return False
+
+    upload_status = upload_to_gdrive(final_file_path, final_file_name)
+
+    if upload_status is True:
+        log("Cleaning up local file after upload...")
+        if os.path.exists(final_file_path):
+            os.remove(final_file_path)
+        return True
+    elif upload_status == "SKIPPED":
+        log(f"Upload skipped. Keeping file locally at {final_file_path}.")
+        _finalize_file(final_file_path)
+        return True
+
+    # Upload failed — clean up to avoid disk accumulation
+    log("Upload failed. Cleaning up downloaded file...")
+    if os.path.exists(final_file_path):
+        os.remove(final_file_path)
+    return False
+
+
 def download_podcast(url, description=None):
     """Downloads a Radiko podcast episode directly via yt-dlp."""
     # Use a temp prefix so we can find the output file afterwards
@@ -188,29 +223,88 @@ def download_podcast(url, description=None):
     final_file_path = os.path.join(DOWNLOAD_DIR, final_file_name)
     os.rename(downloaded_file, final_file_path)
 
-    if not check_truncation(final_file_path):
-        log("Aborting: truncated file detected. Cleaning up.")
-        if os.path.exists(final_file_path):
-            os.remove(final_file_path)
-        return False
+    return _deliver_file(final_file_path, final_file_name)
 
-    upload_status = upload_to_gdrive(final_file_path, final_file_name)
 
-    if upload_status is True:
-        log("Cleaning up local file after upload...")
-        if os.path.exists(final_file_path):
-            os.remove(final_file_path)
-        return True
-    elif upload_status == "SKIPPED":
-        log(f"Upload skipped. Keeping file locally at {final_file_path}.")
-        _finalize_file(final_file_path)
-        return True
+def download_radiru(url, description=None):
+    """
+    Downloads a らじる★らじる (NHK Radio) programme via yt-dlp.
 
-    # Upload failed — clean up to avoid disk accumulation
-    log("Upload failed. Cleaning up downloaded file...")
-    if os.path.exists(final_file_path):
-        os.remove(final_file_path)
-    return False
+    Unlike the podcast path this can produce several files: a programme URL
+    expands into every episode currently in 聞き逃し. Each one is named, verified
+    and delivered on its own.
+
+    Returns (status, title) where status is True, False, or "duplicate".
+    """
+    resolved = resolve_radiru_url(url)
+    if not resolved:
+        log(f"Could not resolve らじる URL: {url}")
+        return False, None
+    if resolved != url:
+        log(f"Resolved {url} -> {resolved}")
+
+    # Episode ids all begin with the programme id, so this one prefix covers
+    # every file the download produces — which is what purge_partial_downloads
+    # needs in order to clear wreckage between retry attempts.
+    programme_id = sanitize_description(resolved.rpartition('p=')[2]) or 'unknown'
+    file_prefix = f"radiru-{programme_id}"
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmpf:
+        fields_log = tmpf.name
+
+    output_path_template = os.path.join(DOWNLOAD_DIR, "radiru-%(id)s.%(ext)s")
+
+    # Omits --ignore-config so yt-dlp.conf still applies, matching record_radiko
+    cmd = ["yt-dlp", "--no-part", "-o", output_path_template,
+           "--print-to-file", RADIRU_FIELDS_TEMPLATE, fields_log,
+           resolved]
+
+    # Append global (env) args only — never args from SQS message bodies
+    cmd.extend(GLOBAL_YT_DLP_ARGS)
+
+    log(f"Downloading らじる programme: {resolved}")
+    download_ok = run_download(cmd, file_prefix, f"らじる {resolved}")
+
+    try:
+        with open(fields_log, 'r', encoding='utf-8') as f:
+            entries = parse_radiru_fields(f.read())
+    except OSError as e:
+        log(f"Could not read yt-dlp field output: {e}")
+        entries = []
+    finally:
+        if os.path.exists(fields_log):
+            os.remove(fields_log)
+
+    if not download_ok:
+        return False, None
+
+    if not entries:
+        log(f"No output files for {resolved} — already downloaded or yt-dlp skipped")
+        return "duplicate", None
+
+    first_title = None
+    all_delivered = True
+
+    for path, start_jst, channel, title in entries:
+        if not os.path.exists(path):
+            log(f"yt-dlp reported {path} but it is no longer on disk; skipping")
+            all_delivered = False
+            continue
+
+        if first_title is None:
+            first_title = title
+
+        ext = path.rsplit('.', 1)[-1]
+        final_file_name = radiru_filename(start_jst, channel, title, ext, description)
+        final_file_path = os.path.join(DOWNLOAD_DIR, final_file_name)
+
+        if path != final_file_path:
+            os.rename(path, final_file_path)
+
+        if not _deliver_file(final_file_path, final_file_name):
+            all_delivered = False
+
+    return all_delivered, first_title
 
 
 def process_message(msg_body):
@@ -219,13 +313,26 @@ def process_message(msg_body):
         data = json.loads(msg_body)
     except json.JSONDecodeError:
         log("Invalid JSON received")
-        return False
+        return False, None
 
     description = data.get('description')
 
-    # Podcast: {"type": "radiko", "url": "https://radiko.jp/podcast/episodes/..."}
-    if data.get('url'):
-        return download_podcast(data['url'], description), None
+    # URL-addressed sources: Radiko podcasts and らじる★らじる (NHK Radio).
+    # Time-shift recordings arrive as station_id + start_times instead.
+    url = data.get('url')
+    if url:
+        if not isinstance(url, str) or not url.startswith(('https://', 'http://')):
+            log(f"Rejected URL with invalid scheme: {url}")
+            return False, None
+
+        kind = classify_radio_url(url)
+        if kind == 'radiru':
+            return download_radiru(url, description)
+        if kind == 'radiko_podcast':
+            return download_podcast(url, description), None
+
+        log(f"No handler for URL: {url}")
+        return False, None
 
     station_id = data.get('station_id')
     start_times = data.get('start_times', [])
@@ -242,8 +349,17 @@ def process_message(msg_body):
 
 
 if __name__ == "__main__":
-    # If run via CLI, sys.argv[1] is station_id, and everything after is a start_time
-    if len(sys.argv) > 2:
+    # A single argument is a URL (らじる or a Radiko podcast); otherwise
+    # sys.argv[1] is a station_id and everything after it is a start_time.
+    if len(sys.argv) == 2 and classify_radio_url(sys.argv[1]):
+        url = sys.argv[1]
+        ensure_yt_dlp_current()
+        log(f"Manual override: downloading {url}")
+        if classify_radio_url(url) == 'radiru':
+            download_radiru(url)
+        else:
+            download_podcast(url)
+    elif len(sys.argv) > 2:
         station_id = sys.argv[1]
         start_times = sys.argv[2:]
         ensure_yt_dlp_current()
