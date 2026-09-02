@@ -11,6 +11,8 @@ Everything here is offline. The network-facing helpers are exercised with their
 transport stubbed out.
 """
 import subprocess
+import sys
+import types
 
 import pytest
 
@@ -255,3 +257,29 @@ def test_unreachable_page_resolves_to_none(monkeypatch):
 
     monkeypatch.setattr(wc.urllib.request, "urlopen", boom)
     assert wc.resolve_radiru_url("https://www.nhk.jp/p/rs/YRLK72JZ7Q/") is None
+
+
+# ==========================================
+# AES-128 HLS decryption guard
+# ==========================================
+
+def test_hls_crypto_present_is_silent(monkeypatch, capsys):
+    # Injected rather than relying on the real package, so the test says the
+    # same thing whether or not the machine running it has pycryptodomex.
+    monkeypatch.setitem(sys.modules, "Cryptodome", types.ModuleType("Cryptodome"))
+    assert wc.warn_if_hls_crypto_missing() is True
+    assert "pycryptodomex" not in capsys.readouterr().out
+
+
+def test_missing_hls_crypto_is_reported_loudly(monkeypatch, capsys):
+    """
+    The failure this guards is invisible everywhere else: yt-dlp falls back to
+    ffmpeg, which drops audio without erroring, and the file it writes is
+    internally consistent about being short — so check_truncation passes it.
+    Boot is the only place the problem can be surfaced.
+    """
+    monkeypatch.setitem(sys.modules, "Cryptodome", None)
+    assert wc.warn_if_hls_crypto_missing() is False
+    out = capsys.readouterr().out
+    assert "pycryptodomex" in out
+    assert "WARNING" in out

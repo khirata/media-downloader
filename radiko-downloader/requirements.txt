@@ -1,5 +1,10 @@
 yt-dlp
 yt-dlp-rajiko
+# pycryptodomex lets yt-dlp decrypt AES-128 HLS streams with its own downloader.
+# Without it yt-dlp delegates to ffmpeg, which cannot convert NHK's ADTS AAC into
+# MP4 (aac_adtstoasc fails), and which silently drops audio -- a 1200s programme
+# came back as 1159s. Not a hard yt-dlp dependency, so it must be asked for.
+pycryptodomex
 boto3
 google-api-python-client
 google-auth-httplib2

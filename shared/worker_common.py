@@ -620,6 +620,29 @@ def ensure_yt_dlp_current():
         log(f"yt-dlp up to date at {after or 'unknown version'}")
 
 
+def warn_if_hls_crypto_missing():
+    """
+    Warn at start when yt-dlp cannot decrypt AES-128 HLS streams by itself.
+
+    Without pycryptodomex yt-dlp hands encrypted HLS to ffmpeg instead. That is
+    not merely slower: ffmpeg cannot convert NHK's ADTS AAC into MP4 at all
+    (aac_adtstoasc fails), and where it does succeed it can silently drop audio
+    -- a 1200s programme came back as 1159s with no error and no failed
+    integrity check, because the file is internally consistent about being
+    short. Nothing downstream can notice, so the only place to catch it is here.
+
+    Returns True when the dependency is present.
+    """
+    try:
+        import Cryptodome  # noqa: F401
+    except ImportError:
+        log("WARNING: pycryptodomex is not installed — yt-dlp will delegate "
+            "AES-128 HLS streams to ffmpeg, which may fail outright or lose "
+            "audio without reporting an error. Rebuild the image to install it.")
+        return False
+    return True
+
+
 def run_main(worker_name, process_message_fn):
     """SQS long-poll loop. Delegates message handling to process_message_fn."""
     if not SQS_QUEUE_URL:
@@ -627,6 +650,7 @@ def run_main(worker_name, process_message_fn):
         sys.exit(1)
 
     ensure_yt_dlp_current()
+    warn_if_hls_crypto_missing()
 
     log(f"Worker started. Listening to {SQS_QUEUE_URL}...")
 
