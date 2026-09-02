@@ -183,6 +183,19 @@ h1 {
   padding-top: 16px;
 }
 
+.force-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.force-toggle input {
+  cursor: pointer;
+}
+
 footer {
   display: flex;
   gap: 12px;

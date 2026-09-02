@@ -15,7 +15,18 @@ exports.handler = async (event) => {
             };
         }
 
-        const { url, urls, description } = JSON.parse(event.body || '{}');
+        const { url, urls, description, force } = JSON.parse(event.body || '{}');
+
+        // Only a real JSON boolean counts. The workers map this flag to a
+        // hard-coded yt-dlp argument list, so it must never carry a value that
+        // could be interpreted as anything but true/false.
+        if (force !== undefined && typeof force !== 'boolean') {
+            return {
+                statusCode: 400,
+                headers: getCorsHeaders(),
+                body: JSON.stringify({ message: 'force must be a boolean' })
+            };
+        }
 
         let urlList = [];
         if (urls && Array.isArray(urls)) {
@@ -51,17 +62,21 @@ exports.handler = async (event) => {
             if (u.includes('radiko.jp') || isRadiruUrl(u)) {
                 radikoUrls.push(u);
             } else if (u.includes('tver.jp')) {
-                const result = await handleTverUrl(u, topicArn, snsClient);
+                const result = await handleTverUrl(u, topicArn, snsClient, force === true);
                 publishResults.push(result);
             } else if (u.includes('youtube.com') || u.includes('youtu.be')) {
-                const result = await handleYoutubeUrl(u, topicArn, snsClient);
+                const result = await handleYoutubeUrl(u, topicArn, snsClient, force === true);
                 publishResults.push(result);
             } else {
                 unhandledUrls.push(u);
             }
         }
 
-        // Group same-station Radiko time-shift URLs into one message per station
+        // Group same-station Radiko time-shift URLs into one message per station.
+        // `force` is deliberately not forwarded: the radio worker downloads to a
+        // temporary prefix it renames afterwards — for Radiko and らじる alike —
+        // so it has no duplicate prevention to override, and the flag would be a
+        // message field that nothing honours.
         if (radikoUrls.length > 0) {
             const results = await handleRadikoUrls(radikoUrls, description, topicArn, snsClient);
             publishResults.push(...results);
@@ -193,8 +208,9 @@ async function handleRadikoUrls(urls, description, topicArn, snsClient) {
     return publishResults;
 }
 
-async function handleTverUrl(u, topicArn, snsClient) {
+async function handleTverUrl(u, topicArn, snsClient, force) {
     const payload = { type: 'tver', url: u };
+    if (force) payload.force = true;
 
     const params = {
         TopicArn: topicArn,
@@ -207,8 +223,9 @@ async function handleTverUrl(u, topicArn, snsClient) {
     return { type: 'tver', url: u, messageId: result.MessageId };
 }
 
-async function handleYoutubeUrl(u, topicArn, snsClient) {
+async function handleYoutubeUrl(u, topicArn, snsClient, force) {
     const payload = { type: 'youtube', url: u };
+    if (force) payload.force = true;
 
     const params = {
         TopicArn: topicArn,

@@ -37,6 +37,14 @@ _MAX_FILENAME_STEM_BYTES = 180
 # clear the wreckage of a failed run without touching finished downloads.
 _PARTIAL_DOWNLOAD_SUFFIX = re.compile(r'(?:-Frag\d+|\.ytdl|\.part|\.temp)$')
 
+# Arguments that turn a normal download into a forced re-download. yt-dlp skips
+# a URL whose output file already sits in DOWNLOAD_DIR ("has already been
+# downloaded"), which is what stops the same TVer episode being fetched twice.
+# --force-overwrites removes that guard, --no-continue avoids resuming a stale
+# partial, and --no-download-archive covers setups that added --download-archive
+# to YT_DLP_ARGS (a harmless no-op otherwise).
+FORCE_DOWNLOAD_ARGS = ["--force-overwrites", "--no-continue", "--no-download-archive"]
+
 
 def sanitize_description(desc):
     """Replace characters that are unsafe in filenames."""
@@ -50,6 +58,29 @@ def truncate_filename(name, max_bytes=_MAX_FILENAME_STEM_BYTES):
         return name
     truncated = encoded[:max_bytes]
     return truncated.decode('utf-8', errors='ignore')
+
+
+def build_yt_dlp_args(force: bool = False) -> list[str]:
+    """
+    Build the trailing yt-dlp arguments for a download.
+
+    Force arguments come last so they win: yt-dlp lets a later argument override
+    an earlier one, and GLOBAL_YT_DLP_ARGS may itself contain a conflicting
+    option such as --download-archive.
+    """
+    return [*GLOBAL_YT_DLP_ARGS, *(FORCE_DOWNLOAD_ARGS if force else [])]
+
+
+def parse_force(data: dict) -> bool:
+    """
+    Read the force flag out of a decoded SQS message body.
+
+    Deliberately strict: only a real JSON ``true`` counts. The flag is a boolean
+    that selects a hard-coded argument list -- no string from a message body is
+    ever passed to yt-dlp -- so anything else is treated as absent rather than
+    coerced.
+    """
+    return data.get('force') is True
 
 
 def log(msg):
