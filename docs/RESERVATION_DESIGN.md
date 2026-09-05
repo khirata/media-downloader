@@ -1,6 +1,6 @@
 # Scheduling & Reservation — Design
 
-Status: **proposal**, not yet implemented. Revision 12.
+Status: **proposal**, not yet implemented. Revision 13.
 Researched and written 2026-09-04. All API observations were verified live on
 that date.
 
@@ -10,7 +10,14 @@ decides when to fetch it. "Schedule" from here on means only the old crontab.
 The service is the **reservation service** (one container, `reservation`),
 never "the scheduler"; its polling loop is **the poller**.
 
-Revision 12 settles the wake-up policy (§4.8): the SQS consumers long-poll and
+Revision 13 splits the programme worker **three ways** — one per source, plus a
+UI/aggregator (§4.1a). Revision 8's "not yet" mis-scored blast radius as a
+future trigger when TVer's undocumented API makes it a present one. All four
+containers share one SQLite file on the one host; the ledger's source-namespaced
+keys mean they never contend for the same rows, and per-worker files remain the
+multi-host fallback.
+
+Revision 12 settled the wake-up policy (§4.8): the SQS consumers long-poll and
 are always awake, so only the resolver *sweep* needs an interval — **1 hour,
 with jitter**. Verified that Radiko honours `If-None-Match`/`If-Modified-Since`
 with a 0-byte 304, so frequency is not bandwidth-bound.
@@ -541,9 +548,9 @@ new destination:
 | ----------------- | ----- | -------- |
 | `radiko` | radio | radio download worker |
 | `tver`, `youtube` | video | video download worker |
-| **`tver_series`** *(new)* | **programme-tver** | programme worker (§4.1a) |
-| **`radiru_series`** *(new)* | **programme-radiru** | programme worker (§4.1a) |
-| *(the first three again)* | **observe** *(optional, §2.4a)* | programme worker |
+| **`tver_series`** *(new)* | **programme-tver** | the TVer resolver (§4.1a) |
+| **`radiru_series`** *(new)* | **programme-radiru** | the らじる resolver (§4.1a) |
+| *(the first three again)* | **observe** *(optional, §2.4a)* | `reservations-ui` |
 
 The first four rows are the system; the last is the bonus. A deployment that
 does not want a complete download history simply does not create that
@@ -552,14 +559,19 @@ subscription, and nothing else changes.
 ```mermaid
 graph TD
     EXT["Extension / curl / cron"]
-    RES["programme worker<br/>UI + poller + SQLite"]
+    R1["programme-radiko"]
+    R2["programme-radiru"]
+    R3["programme-tver"]
+    UI["reservations-ui<br/>UI + status + observe"]
+    DB[("reservations.sqlite")]
     API["api-gw + Lambda<br/>classifies URLs"]
     SNS["SNS dispatcher"]
     QR["radio SQS"]
     QV["video SQS"]
-    QP["reservation SQS"]
-    QO["reservation-observe SQS<br/>optional"]
-    QS["reservation-status SQS"]
+    QP["programme-tver SQS"]
+    QN["programme-radiru SQS"]
+    QO["observe SQS (optional)"]
+    QS["status SQS"]
     W1["radio worker · JP"]
     W2["video worker"]
     CAT["Programme tables"]
@@ -573,62 +585,113 @@ graph TD
     SNS -.->|"radiko / tver / youtube"| QO
     QR --> W1
     QV --> W2
-    QP -->|"long poll"| RES
-    QN -->|"long poll"| RES
-    QO -.->|"long poll"| RES
+    QP -->|"long poll"| R3
+    QN -->|"long poll"| R2
+    QO -.->|"long poll"| UI
     W1 & W2 -->|"SendMessage"| QS
-    QS -->|"long poll"| RES
-    CAT -.->|"read, region-free"| RES
-    RES ==>|"POST /publish (episode URLs)"| API
+    QS -->|"long poll"| UI
+    CAT -.->|"read, region-free"| R1 & R2 & R3
+    R1 & R2 & R3 ==>|"POST /publish (episode URLs)"| API
+    R1 & R2 & R3 <--> DB
+    UI <--> DB
 ```
 
 Note what a programme worker publishes: **episode URLs**. It converts a
-programme request into episode requests, which is the whole job.
+programme request into episode requests, which is the whole job. §4.1a splits
+that job three ways, one container per source.
 
-### 4.1a One programme worker, or one per source?
+### 4.1a One programme worker, or three?
 
-*(From the review: "I'm fine separating programme workers, or reservation
-queue, for TVer and らじる.")*
+*(From the review: "evaluate single reservation worker vs three — TVer, らじる
+and Radiko. I think wake-up control and maintenance are easier with separate
+workers.")*
 
-Worth separating the two halves of that question, because they have different
-answers.
+**Three. The review is right, and revision 8's "not yet" was wrong** — not
+because the arguments changed, but because I mis-scored one of them. Here is
+the evaluation.
 
-**Separate queues per source: yes, do it now.** It costs one Terraform resource
-each and it is the seam that makes everything else optional later:
+#### The case for splitting
 
-| Type on the topic | Queue | Job |
-| ----------------- | ----- | --- |
-| `tver_series` | `programme-tver` | follow a TVer (series, season) |
-| `radiru_series` | `programme-radiru` | follow a らじる series |
+| | One worker | Three workers |
+| --- | --- | --- |
+| **Blast radius** | A hung fetch, a leak, or an exception outside the per-pass `try/except` degrades all three sources | A TVer failure cannot stop Radiko recordings |
+| **Deploy granularity** | Fixing the fragile resolver restarts the stable ones mid-sweep | Rebuild and restart one container |
+| **Wake-up control** | Per-source intervals need a scheduler *inside* the process | An env var per compose service |
+| **Log legibility** | Three sources interleaved | `docker compose logs programme-tver` |
+| **Shape of the repo** | A new kind of component | Identical to `radiko-downloader` / `tver-downloader` |
+| **Shared state** | Trivial — one process, one file | Needs an answer (below) |
+| **Container count** | 1 | 4, counting the UI |
 
-Distinct flat types rather than `{type: "programme", source: "tver"}` — the
-topic's convention is already a flat `type` string (`radiko`, `tver`,
-`youtube`), and it keeps each filter policy a single-key match.
+**Blast radius is the argument that decides it, and I under-weighted it.**
+Revision 8 filed it as a future trigger. It is not: §3.3 already records that
+TVer's `platform_uid` flow is *undocumented and unversioned*, and API drift is
+the top operational risk in this repo — `ensure_yt_dlp_current` exists for
+exactly that reason. The fragile resolver is fragile **today**, so isolating it
+is a present-tense need, not a contingency. Process isolation is also a
+categorically stronger guarantee than a `try/except`, which does nothing for a
+hung socket or a leak.
 
-**Separate processes: not yet, and here is the trigger.** One programme worker
-consuming both queues is right at this scale — a handful of reservations, a
-tick every 15 minutes, and three catalogues that are cheap to fetch. What would
-force a split:
+**Wake-up control is a real second-order win**, and it fits the review's
+framing. With three services the interval is `TICK_INTERVAL` in each `.env` —
+configuration, not code — which is how everything else in this repo is
+configured. It also gives restart granularity while tuning: changing TVer's
+interval no longer interrupts a Radiko sweep.
 
-* **Regional access for *resolution*.** Currently not a factor: all three
-  metadata APIs answered from a US host (§3.1). If one ever became JP-only, its
-  programme worker would move to a JP host and the others would not.
-* **Credentials you do not want co-located.** TVer's anonymous token needs
-  nothing today; a source needing a real account might warrant its own
-  container.
-* **Blast radius.** One process means a resolver crashing badly enough takes
-  the others with it. The per-pass `try/except` of §5.1 is the cheaper answer
-  first.
+#### The cost, and how it is paid
 
-**The split is cheap when it comes, because the ledger already partitions.**
-Keys are namespaced by source — `radiko:…`, `radiru:…`, `tver:…` (§5.4) — so
-no query ever crosses sources, and a split gives each worker its own SQLite
-file with no migration and no cross-worker reads. Only the UI aggregates, and
-it can do that over per-worker APIs or over co-located files.
+**Shared state is the only real one.** Three workers plus a UI all need
+reservations, the ledger and health. The answer keeps §5.1's conclusion intact:
 
-That is the property worth protecting in Phase 3: **keep resolvers from sharing
-anything but the store**, and the topology stays a deployment decision rather
-than a rewrite.
+> **One SQLite file, shared by all four containers on the one host.** The write
+> rate is what made SQLite right in the first place — 96 bursts a day across
+> *all* sources (§5.1) — and splitting the writers across processes does not
+> change that. WAL mode plus a `busy_timeout` handles four occasional writers
+> exactly as it handled four threads.
+
+Two properties make this comfortable rather than merely workable:
+
+* **The ledger is already partitioned by source** (`radiko:…`, `radiru:…`,
+  `tver:…`, §5.4), so the workers never contend for the same rows — only, very
+  occasionally, for the write lock.
+* **Per-worker files remain the fallback.** If the workers ever move to
+  separate hosts, that same namespacing means each can own its own file with
+  no schema change and no migration. The shared file is a convenience, not a
+  coupling.
+
+The constraint from §5.1 tightens slightly and should be stated: all four
+containers must be on **one host, sharing a local-filesystem volume**. Not a
+NAS mount.
+
+#### What the four containers are
+
+| Container | Inbound queue | Tick | Job |
+| --------- | ------------- | ---- | --- |
+| `programme-radiko` | *(none — Radiko has no programme URL, §2.4)* | ✓ | resolve Radiko reservations from the weekly XML |
+| `programme-radiru` | `radiru_series` | ✓ | follow らじる series |
+| `programme-tver` | `tver_series` | ✓ | follow TVer (series, season) |
+| `reservations-ui` | `status`, `observe` | — | the UI and REST API, plus the two **cross-source** consumers (§4.3) |
+
+Putting the status and observe consumers in the UI container is not
+arbitrary: both carry messages spanning every source, so they belong with the
+component that already holds the aggregate view. It also means the three
+resolvers have exactly one shape — read a catalogue, publish episode URLs —
+and nothing else.
+
+Note the asymmetry: `programme-radiko` has a tick but no queue, because there
+is no Radiko programme URL to publish. That is a property of the source, not a
+design wart.
+
+#### The thing that would make maintenance *worse*, if neglected
+
+Three workers become three codebases unless the common parts stay common. The
+publisher, the ledger DAL, the title matcher (§5.5), the health writer and the
+episode/part model all belong in **`shared/`**, next to `worker_common.py` —
+which is the pattern this repo already uses for exactly this reason.
+
+Split the *sources*, share the *machinery*. A resolver should be a small module
+that turns a fetched catalogue into `list[Episode]` (§4.7) and nothing more; if
+one starts growing its own publisher or its own ledger access, the split has
+begun costing what it was meant to save.
 
 ### 4.2 No `region` field
 
@@ -736,9 +799,9 @@ The worker can compute `key` from the message it was handed — the same
 derivation the resolver uses — so no new correlation id has to be threaded
 through the dispatch path.
 
-**Consuming both.** The poller thread runs the two long-polls alongside its
-tick, in threads; all three write the same SQLite file, which serialises them
-(§5.1).
+**Consuming both.** Each resolver long-polls its own programme queue alongside its tick; the
+UI container long-polls `status` and `observe`, which are the cross-source ones
+(§4.1a). All four write the same SQLite file, which serialises them (§5.1).
 This is deliberately the same 20-second `WaitTimeSeconds` loop the workers
 already use in `run_main`, so there is one polling pattern in the repo, not
 three.
@@ -805,11 +868,9 @@ Regional access differs by source — らじる is JP-only in yt-dlp, Radiko nee
 areafree, YouTube needs nothing — so workers are distributed and stateless,
 while the reservation service is centralised and stateful:
 
-| Container | Job |
-| --------- | --- |
-| `reservation` | Everything: UI + REST API (§6), the tick loop, and the two SQS consumers of §4.3, as threads in one process. State is one SQLite file on a mounted volume (§5.1). |
-
-One container, in the same shape as the two workers that already exist.
+Four containers (§4.1a) — three source resolvers plus the UI/aggregator —
+sharing one SQLite file on a local volume (§5.1). Each resolver is the same
+shape as the two download workers that already exist.
 
 Centralising the control plane works only because of the §3.1 finding:
 **resolution is region-free** — the programme tables answer from anywhere, and
@@ -934,9 +995,17 @@ host that was asleep.
 hour sits comfortably above it. 24 ticks a day is also pleasantly legible in a
 log.
 
-Between the review's two options: **60 minutes**. All that 30 buys is fetching
-a TVer episode up to half an hour sooner against a 7-day window, which is not
-worth doubling the request volume.
+Between the review's two options: **60 minutes**, as the default for all three.
+All that 30 buys is fetching a TVer episode up to half an hour sooner against a
+7-day window, which is not worth doubling the request volume.
+
+Because §4.1a gives each source its own container, the interval is a
+`TICK_INTERVAL` env var per compose service rather than a scheduler inside one
+process — which is what makes per-source tuning worth having at all. One
+counter-intuitive note if you do tune: the source to make *more* frequent is
+Radiko, not TVer. Radiko is the best-behaved (a published `ttl`, working
+ETags, a stable table), while TVer's is the undocumented one it would be least
+wise to poll harder.
 
 **Add ±5 minutes of jitter.** A fixed hourly tick lands every deployment on
 :00; jitter spreads retries and keeps a restart from re-synchronising
@@ -1054,22 +1123,19 @@ milliseconds.
 | Queries needing a planner worth the name | No — lookups by key, lists by date |
 | Replication, PITR, roles | No |
 
-**So: SQLite, and the container split collapses too.** With no database server
-to sit between them, `reservation-web` and `reservation-poller` have no reason
-to be separate containers — and revision 4's justification for splitting them
-("the UI must stay responsive while a tick pulls a 758 KB XML") does not hold
-up: Python releases the GIL during I/O, so a thread doing an HTTP fetch does not
-block a thread serving a request. One container, several threads, one file:
+**So: SQLite.** Revision 4's justification for a separate web container ("the
+UI must stay responsive while a tick pulls a 758 KB XML") does not hold up
+either — Python releases the GIL during I/O, so a fetch does not block a
+request. The containers that do exist are split for *blast radius*, per §4.1a,
+which is a different and better reason:
 
 | Was (rev 4) | Now |
 | ----------- | --- |
-| `reservation-web` + `reservation-poller` + `postgres` | **`reservation`** — web, tick, and two SQS consumers as threads |
-| Postgres volume + credentials + major-version upgrades | one `.sqlite` file on a mounted volume |
+| `reservation-web` + `reservation-poller` + `postgres` | three source resolvers + `reservations-ui` (§4.1a) |
+| Postgres volume + credentials + major-version upgrades | one `.sqlite` file on a shared local volume |
 
-This also puts the new component in exactly the shape of the two that exist: a
-single container with a `.env` and a volume. Three containers would have made
-the reservation service the most complicated thing in a repo whose whole
-character is small workers doing one job.
+Each of them is in exactly the shape of the two workers that exist: a container
+with a `.env` and a volume, doing one job.
 
 **Keep the schema portable anyway**, so Postgres stays a swap rather than a
 rewrite. It costs nothing if the SQL avoids both dialects' specialities:
@@ -1107,6 +1173,14 @@ SMB, so a NAS mount will corrupt it — and every writer must be on that host.
 Both follow from §4.5 anyway, but they are the conditions under which this
 choice is correct, and the moment either stops holding, the portable schema
 above is the escape hatch.
+
+Since §4.1a the writers are four *containers* rather than four threads. That
+changes nothing material: WAL mode plus a `busy_timeout` serialises processes
+the same way it serialises threads, the shared `-shm` file works for processes
+on one host, and the write rate is unchanged — 96 bursts a day is 96 bursts a
+day however many processes produce them. The ledger's source-namespaced keys
+mean the workers never contend for the same *rows*, only very occasionally for
+the write lock.
 
 **One new failure mode comes with the collapse.** In a single process an
 unhandled exception kills a *thread*, not the process — so the tick could die
@@ -1612,10 +1686,10 @@ the pure-resolver split in §4.7 is what makes it possible.
 | Phase | Scope | Delivers |
 | ----- | ----- | -------- |
 | **0** | Resolver library + fixtures + `preview` CLI. Radiko only, including part grouping (§5.2). | Proof that TOKIO HOT 100 resolves to one episode of four parts, on real data, before anything can record. |
-| **1** | `reservation` container + SQLite + ledger, publishing via `/publish`. Radiko only. Plus the §4.6 late-binding check in the radio worker. | **Replaces the crontab.** Fixes problems 1–6. |
-| **2** | `reservation-web`: reservations, programme browser, live preview with part grouping, history. | The UI. Makes the feature usable by a person rather than by `crontab -e`. |
+| **1** | `programme-radiko` container + SQLite + ledger, publishing via `/publish`. Plus the §4.6 late-binding check in the radio worker. | **Replaces the crontab.** Fixes problems 1–6. |
+| **2** | `reservations-ui`: reservations, programme browser, live preview with part grouping, history. | The UI. Makes the feature usable by a person rather than by `crontab -e`. |
 | **3** | Programme-URL classification in the Lambda; the `reservation` queue + subscription; worker `SendMessage` grant and status emit; health chips. Optionally the `reservation-observe` subscription. | Publishing a series URL starts following it. Distributed workers become observable. |
-| **4** | らじる and TVer resolvers (season-aware). | Fixes problems 7, 8 and 9 — the manual poll of §1.2 stops being a person's job. |
+| **4** | `programme-radiru` and `programme-tver` containers (season-aware). | Fixes problems 7, 8 and 9 — the manual poll of §1.2 stops being a person's job. |
 
 Phase 1 pays for the project. Phase 2 makes it pleasant. Phase 4 is what could
 not be attempted at all before this research.
@@ -1641,12 +1715,13 @@ not be attempted at all before this research.
 | A compromised worker triggers downloads | Low but severe | Workers get `sqs:SendMessage` on the status queue only — never `sns:Publish` (§4.3). A worker cannot make the system fetch anything. |
 | A status message is lost or arrives out of order | Medium | Non-fatal by design: the row stays `published` and the expiry warning fires (§7). Status advances monotonically by `(key, attempt)`, so a late `failed` cannot overwrite a `succeeded` (§4.3). |
 | A worker wins a job it cannot serve regionally | Low today | Type-based routing already separates regions (§4.2). Split `youtube` onto its own queue if a video worker is ever deployed outside Japan. |
-| Control-plane host down | Medium | Only costs recordings if downtime exceeds the shortest window (~7 days). Workers keep draining their queues. |
+| The one host is down | Medium | Only costs recordings if downtime exceeds the shortest window (~7 days). Workers keep draining their queues. |
 | TVer `platform_uid` flow breaks | Medium | Undocumented API. Re-mint once, back off, disable that resolver only. |
 | UI reachable from the internet | Low but severe | Not internet-facing by default; token on the REST API; documented in the README. |
 | Database file lost or corrupted | Low | Degrades to re-downloads, not loss: the ledger regenerates from the sources. Reservations are the irreplaceable part — `VACUUM INTO` on a timer, plus the API export (§5.1). |
 | SQLite on a NAS mount | Low but severe | POSIX locking is unreliable over NFS/SMB. Documented constraint (§5.1); the volume must be local. |
-| The tick thread dies silently | Medium | `try/except` per pass, plus a `last_tick_at` surfaced in the UI and alerted on (§5.1, §7). |
+| A resolver dies silently | Medium | `try/except` per pass, plus a per-source `last_tick_at` surfaced in the UI and alerted on (§5.1, §7). Since §4.1a each resolver is its own container, so a crash-loop is visible in `docker ps` and cannot take the others with it. |
+| Three workers drift into three codebases | Medium | The publisher, ledger DAL, matcher, health writer and episode model live in `shared/` (§4.1a). A resolver that grows its own publisher is the signal the split has started costing what it saved. |
 | API GW quota (100/day, 2 rps, burst 5) | Low | Ticks do not call the API; only publishes do — but §5.5 makes that one call *per episode*, so a first-run backfill is the realistic risk. Cap publishes per tick. |
 | Clock | — | Japan has no DST. Store aware datetimes; normalise to JST once, at the edge. |
 
