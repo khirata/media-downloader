@@ -1,6 +1,6 @@
 # Scheduling & Reservation — Design
 
-Status: **proposal**, not yet implemented. Revision 7.
+Status: **proposal**, not yet implemented. Revision 8.
 Researched and written 2026-09-04. All API observations were verified live on
 that date.
 
@@ -10,7 +10,14 @@ decides when to fetch it. "Schedule" from here on means only the old crontab.
 The service is the **reservation service** (one container, `reservation`),
 never "the scheduler"; its polling loop is **the poller**.
 
-Revision 7 reframes the dispatch model (§2.4): there are **two request types**
+Revision 8 adopts the review's framing that this is **a new worker for the
+programme**, not a control plane (§2.4); gives each source its own programme
+queue while keeping one process for now, with the split trigger and the
+already-partitioned ledger documented (§4.1a); and settles TVer season
+selection against three real series — index 0, confirmed as 本編, stored as an
+id, modelled as a list so other sections are a later checkbox (§3.3).
+
+Revision 7 reframed the dispatch model (§2.4): there are **two request types**
 — an *episode* URL, which is what runs today, and a *programme* URL, which
 denotes a set including episodes not yet published. That is a type distinction
 rather than an intent ambiguity, so `api-gw` gains one URL class and routes
@@ -181,8 +188,17 @@ denotes**:
 
 | Request type | Denotes | Example | Routes to |
 | ------------ | ------- | ------- | --------- |
-| **Episode** | one downloadable thing that exists **now** | `radiko.jp/#!/ts/FMJ/20260906130000`, `tver.jp/episodes/epliwk4kpb`, `nhk.jp/p/rs/S/episode/re/E/`, any YouTube URL | a worker queue — exactly as today |
-| **Programme** | a **set**, including episodes not yet published | `tver.jp/series/srusndh59f`, `nhk.jp/p/rs/242V3Q87GK/` | the reservation queue |
+| **Episode** | one downloadable thing that exists **now** | `radiko.jp/#!/ts/FMJ/20260906130000`, `tver.jp/episodes/epliwk4kpb`, `nhk.jp/p/rs/S/episode/re/E/`, any YouTube URL | a **download worker** — exactly as today |
+| **Programme** | a **set**, including episodes not yet published | `tver.jp/series/srusndh59f`, `nhk.jp/p/rs/242V3Q87GK/` | a **programme worker** (§4.1a) |
+
+> **The right mental model is a worker, not a control plane.** *(From the
+> review: "I'm treating this as creating a new worker for the programme.")*
+> That framing is better than revision 5's, and it is adopted throughout. A
+> programme worker has the same shape as the two that exist — long-poll a
+> queue, do one job, hold no cleverness — and its one job is **turning a
+> programme request into episode requests**. Its output is the request type
+> that already worked. The UI (§6) rides along with it; it is not a separate
+> tier.
 
 That is a **type** distinction, not an intent ambiguity, and sorting URLs by
 type is precisely what `api-gw` already does. Teaching it that
@@ -390,8 +406,7 @@ Three findings that change the design:
 
 1. **Reserve a (series, season), not a series.** A naive series follow would
    fetch 10-minute digests, 30-second trailers, and 解説放送版 — which is the
-   *same episode again* with audio description. Default to 本編; show the
-   season list with episode counts and let the user opt into the rest.
+   *same episode again* with audio description.
 2. **`callSeasonEpisodes` returns a mixed list.** Of the 18 entries, 17 are
    `type: "episode"` and one is `type: "live"` — a DVR/simulcast entry for
    第１０話 with `startAt`/`onairStartAt`, **no `isAvailable`, and no VOD
@@ -401,6 +416,48 @@ Three findings that change the design:
    footnote.
 3. **Windows are per-episode.** 第９話 ends 2026-09-11; 第１話 ends 2026-10-16.
    Read `endAt` per entry; never assume seven days.
+
+#### Which season is the main one?
+
+*(From the review: "sections could differ for other programmes — focus on 本編
+and optionally add other sections later, maybe in the UI.")* The sections do
+differ. Three series, checked 2026-09-04:
+
+```text
+srusndh59f  [0] 本編   [1] サイドストーリー  [2] ダイジェスト  [3] 解説放送版  [4] ナビ・予告
+srufa4d98z  [0] 本編   [1] メイキング        [2] ダイジェスト  [3] 解説放送版  [4] ナビ・予告
+sry374aoat  [0] 本編
+```
+
+The *extra* sections vary — サイドストーリー in one, メイキング in the other —
+and a simple programme has only the one. But **本編 is at index 0 in all three**,
+which gives two independent signals rather than one:
+
+* **Select index 0**, because a title is free text and a series could name its
+  main section something else.
+* **Check that it is titled `本編`**, as a sanity signal — if it is not, the
+  series is unusual and the UI should say so rather than guessing silently.
+
+Then **store the resolved `seasonID`**, not the rule that found it. The id is
+the stable handle; order and title are presentation.
+
+Model it as a **list from the start**, holding one element:
+
+```jsonc
+"selector": { "series": "srufa4d98z", "seasons": ["ssnfef8wr6"] }
+```
+
+Adding ダイジェスト later is then a UI checkbox and a second array element — no
+schema change, no migration. That is the whole cost of taking the review's
+"optionally add other sections" seriously now instead of later.
+
+> **New-season detection belongs in §7.** Following a stored `seasonID` means a
+> season added afterwards is silently not followed. Comparing the live season
+> list against the covered ids on each tick is nearly free, and *"this series
+> now has a section you are not following"* is exactly the silent-failure class
+> §7 exists for. It also covers the case these three samples cannot rule out:
+> a series that uses seasons chronologically (シーズン1, シーズン2) rather than
+> as content categories.
 
 ```jsonc
 { "type": "episode",
@@ -441,7 +498,7 @@ Three commitments:
 | ------ | ---------- | ------------ | ------ | --- |
 | Radiko | station + title match | `to` < now − grace | `ft` + 7 days | **1..n**, contiguous |
 | らじる | `radioSeriesId` | `contentStatus == "ready"` | `audio[].expires` | 1 |
-| TVer | `seriesID` + `seasonID` | `type=="episode"` and `isAvailable` | `endAt` | 1 |
+| TVer | `seriesID` + `seasonID`(s) | `type=="episode"` and `isAvailable` | `endAt` | 1 |
 | YouTube | *not reservable* | — | — | — |
 
 ---
@@ -456,19 +513,20 @@ new destination:
 
 | Type on the topic | Queue | Consumer |
 | ----------------- | ----- | -------- |
-| `radiko` | radio | radio worker |
-| `tver`, `youtube` | video | video worker |
-| **`programme`** *(new)* | **reservation** | reservation service |
-| *(those three again)* | **reservation-observe** *(optional, §2.4a)* | reservation service |
+| `radiko` | radio | radio download worker |
+| `tver`, `youtube` | video | video download worker |
+| **`tver_series`** *(new)* | **programme-tver** | programme worker (§4.1a) |
+| **`radiru_series`** *(new)* | **programme-radiru** | programme worker (§4.1a) |
+| *(the first three again)* | **observe** *(optional, §2.4a)* | programme worker |
 
-The first three rows are the system; the fourth is the bonus. A deployment that
+The first four rows are the system; the last is the bonus. A deployment that
 does not want a complete download history simply does not create that
 subscription, and nothing else changes.
 
 ```mermaid
 graph TD
     EXT["Extension / curl / cron"]
-    RES["reservation service<br/>UI + poller + SQLite"]
+    RES["programme worker<br/>UI + poller + SQLite"]
     API["api-gw + Lambda<br/>classifies URLs"]
     SNS["SNS dispatcher"]
     QR["radio SQS"]
@@ -484,11 +542,13 @@ graph TD
     API --> SNS
     SNS -->|"radiko"| QR
     SNS -->|"tver / youtube"| QV
-    SNS -->|"programme"| QP
+    SNS -->|"tver_series"| QP
+    SNS -->|"radiru_series"| QN
     SNS -.->|"radiko / tver / youtube"| QO
     QR --> W1
     QV --> W2
     QP -->|"long poll"| RES
+    QN -->|"long poll"| RES
     QO -.->|"long poll"| RES
     W1 & W2 -->|"SendMessage"| QS
     QS -->|"long poll"| RES
@@ -496,9 +556,53 @@ graph TD
     RES ==>|"POST /publish (episode URLs)"| API
 ```
 
-Note what the reservation service publishes: **episode URLs**. It converts a
-programme request into episode requests, which is the whole job. Its output is
-the request type that already worked.
+Note what a programme worker publishes: **episode URLs**. It converts a
+programme request into episode requests, which is the whole job.
+
+### 4.1a One programme worker, or one per source?
+
+*(From the review: "I'm fine separating programme workers, or reservation
+queue, for TVer and らじる.")*
+
+Worth separating the two halves of that question, because they have different
+answers.
+
+**Separate queues per source: yes, do it now.** It costs one Terraform resource
+each and it is the seam that makes everything else optional later:
+
+| Type on the topic | Queue | Job |
+| ----------------- | ----- | --- |
+| `tver_series` | `programme-tver` | follow a TVer (series, season) |
+| `radiru_series` | `programme-radiru` | follow a らじる series |
+
+Distinct flat types rather than `{type: "programme", source: "tver"}` — the
+topic's convention is already a flat `type` string (`radiko`, `tver`,
+`youtube`), and it keeps each filter policy a single-key match.
+
+**Separate processes: not yet, and here is the trigger.** One programme worker
+consuming both queues is right at this scale — a handful of reservations, a
+tick every 15 minutes, and three catalogues that are cheap to fetch. What would
+force a split:
+
+* **Regional access for *resolution*.** Currently not a factor: all three
+  metadata APIs answered from a US host (§3.1). If one ever became JP-only, its
+  programme worker would move to a JP host and the others would not.
+* **Credentials you do not want co-located.** TVer's anonymous token needs
+  nothing today; a source needing a real account might warrant its own
+  container.
+* **Blast radius.** One process means a resolver crashing badly enough takes
+  the others with it. The per-pass `try/except` of §5.1 is the cheaper answer
+  first.
+
+**The split is cheap when it comes, because the ledger already partitions.**
+Keys are namespaced by source — `radiko:…`, `radiru:…`, `tver:…` (§5.4) — so
+no query ever crosses sources, and a split gives each worker its own SQLite
+file with no migration and no cross-worker reads. Only the UI aggregates, and
+it can do that over per-worker APIs or over co-located files.
+
+That is the property worth protecting in Phase 3: **keep resolvers from sharing
+anything but the store**, and the topology stays a deployment decision rather
+than a rewrite.
 
 ### 4.2 No `region` field
 
@@ -520,7 +624,7 @@ no Lambda change, nothing to migrate.
 
 Recorded here so the trap is visible before someone deploys the second worker.
 
-### 4.3 The transport: three queues, and no inbound connections
+### 4.3 The transport: SQS in, HTTP out, no inbound connections
 
 *(From the review: "How do you plan to establish the connection from dispatcher
 to the reservation system? This is not a real-time system, so the communication
@@ -551,9 +655,9 @@ So the inbound links use different mechanisms, and get their own queues:
 
 | Queue | Fed by | Carries | Grant |
 | ----- | ------ | ------- | ----- |
-| `reservation` | **SNS subscription**, `type: ["programme"]` | programme requests (§2.4) | none — SNS writes via a queue policy |
-| `reservation-observe` | **SNS subscription**, the three episode types — *optional* (§2.4a) | every dispatched download | none — same |
-| `reservation-status` | **Workers, `sqs:SendMessage`** | job outcomes | `sqs:SendMessage` on this one queue ARN |
+| `programme-tver`, `programme-radiru` | **SNS subscriptions**, `{type:["tver_series"]}` / `{type:["radiru_series"]}` | programme requests (§2.4, §4.1a) | none — SNS writes via a queue policy |
+| `observe` | **SNS subscription**, the three episode types — *optional* (§2.4a) | every dispatched download | none — same |
+| `status` | **Download workers, `sqs:SendMessage`** | job outcomes | `sqs:SendMessage` on this one queue ARN |
 
 Keeping worker status on a queue of its own is worth the extra Terraform: it makes a
 **trust boundary** out of the transport. Anything arriving on
@@ -569,10 +673,10 @@ they arrived on, which is a weaker guarantee for no real saving.)
 
 **Terraform delta**, all of it additive:
 
-* Three `aws_sqs_queue` resources plus queue policies — two, if the §2.4a bonus is skipped.
-* Two `aws_sns_topic_subscription` resources — `{type: ["programme"]}` on
-  `reservation`, and `{type: ["radiko","tver","youtube"]}` on
-  `reservation-observe` (the optional one). Both use
+* Four `aws_sqs_queue` resources plus queue policies — three, if the §2.4a bonus is skipped.
+* Three `aws_sns_topic_subscription` resources — `{type:["tver_series"]}`,
+  `{type:["radiru_series"]}`, and `{type:["radiko","tver","youtube"]}` on the
+  optional `observe` queue. All use
   `filter_policy_scope = "MessageBody"` and `raw_message_delivery = true`, the
   same shape as the two that already exist. Note `status` appears in neither:
   it never touches the topic.
@@ -636,8 +740,8 @@ same kind it already applies:
 
 ```js
 // alongside the existing episode rules
-/^https?:\/\/tver\.jp\/series\/[0-9a-z]+/i                         → "programme"
-/^https?:\/\/www\.nhk\.jp\/p\/(?:[^/?#]+\/)?rs\/[\dA-Za-z]+\/?$/i  → "programme"
+/^https?:\/\/tver\.jp\/series\/[0-9a-z]+/i                         → "tver_series"
+/^https?:\/\/www\.nhk\.jp\/p\/(?:[^/?#]+\/)?rs\/[\dA-Za-z]+\/?$/i  → "radiru_series"
 //   note the anchored end: with /episode/re/… it stays an episode request
 ```
 
@@ -772,7 +876,7 @@ Programme (番組)      what you reserve.  1 row per reservation
 | --- | --- | --- | --- |
 | Radiko | station + title pattern | a contiguous run of matching parts | each `<prog>` (`ft`→`to`) |
 | らじる | `radioSeriesId` | `radioEpisodeId` | — (always 1) |
-| TVer | `seriesID` + `seasonID` | episode `id` | — (always 1) |
+| TVer | `seriesID` + one or more `seasonID` | episode `id` | — (always 1) |
 
 ### 5.1 Storage: SQLite in the same container, not a database server
 
@@ -925,7 +1029,7 @@ the YAML-equivalent, so it can be kept in git alongside the code (§5.1).
 
 Selectors per source: **Radiko** — `station` + `match.title`, or `at` +
 `duration` for a time block when titles are inconsistent. **らじる** —
-`series`. **TVer** — `series` + `season` (§3.3; defaults to 本編).
+`series`. **TVer** — `series` + `seasons` (a list; §3.3 explains how the main season is chosen and why it is stored as an id).
 
 There is **no `force` field**, by §2.5.
 
@@ -1060,10 +1164,13 @@ crashes. Three defences, surfaced as the health chip in §6:
    Usually a 拡大版 — occasionally a match that has gone wrong. Cheap to
    compute from the `parts` column (§5.4) and it is the earliest visible sign
    of the failure mode §3.1 warns about.
-3. **Expiry warning.** A ledger row still `published` or `failed` with
+3. **A new TVer season appears.** A reservation follows stored `seasonID`s, so
+   a section added later is silently uncovered. Comparing the live season list
+   against the covered ids each tick is nearly free (§3.3).
+4. **Expiry warning.** A ledger row still `published` or `failed` with
    `expires_at` inside 24 h escalates. Last chance to intervene by hand.
-4. **Worker liveness.** No status message from a worker in N hours means jobs
-   may be queueing for a host that is gone.
+5. **Worker liveness.** No status message from a download worker in N hours
+   means jobs may be queueing for a host that is gone.
 
 ---
 
@@ -1082,11 +1189,14 @@ the pure-resolver split in §4.7 is what makes it possible.
   without configuration; two non-adjacent airings become two episodes; a
   single-part programme still works; the `(PART\d+)` suffix is stripped from
   the episode title.
-* **TVer season and entry filtering (§3.3)** — a season list yields only the
-  reserved season; a `type: "live"` entry is skipped rather than crashing;
-  per-episode `endAt` is honoured rather than assuming seven days. The probe
-  script for this research crashed on the live entry, so this is a regression
-  test for a real defect, not a hypothetical.
+* **TVer season selection and entry filtering (§3.3)** — index 0 is chosen and
+  its `本編` title confirmed across the three captured series, including the
+  single-season one; a series whose index 0 is *not* `本編` is surfaced rather
+  than silently followed; only the reserved `seasonID`s yield episodes; a
+  `type: "live"` entry is skipped rather than crashing; per-episode `endAt` is
+  honoured rather than assuming seven days. The probe script for this research
+  crashed on the live entry, so that one is a regression test for a real
+  defect.
 * **Late binding (§4.6)** — the path that prevents a wrong recording. A message
   whose `ft` still matches; one whose programme moved 30 minutes; one whose
   programme is gone. Assert re-derivation, and assert a clean failure rather
@@ -1145,7 +1255,7 @@ not be attempted at all before this research.
 | Sponsor prefix changes in a Radiko title | Medium | Match the distinctive core, not the full title (§3.1). Heartbeat catches it within two occurrences. |
 | Programme API changes shape → silent stop | Medium | Heartbeat (§7); contract canaries (§8); resolvers isolated so one breakage does not stop the others. |
 | Radiko corrects the table between publish and download | Medium | §4.6 — exactly what it is for. |
-| A TVer season is retired or renumbered mid-run | Medium | Reservation is (series, season); heartbeat fires when the season stops yielding episodes. |
+| A TVer season is retired, renamed, or added mid-run | Medium | The reservation stores `seasonID`s, which survive renaming; the heartbeat fires when one stops yielding episodes, and new-season detection (§7) reports one that appears. |
 | Observation causes a publish loop | Low but severe | Only possible with the §2.4a bonus enabled. Structural rule: observation writes history only, enforced by having no code path from the SQS consumer to the publisher. |
 | A programme URL creates an unwanted standing reservation | Medium | Visible in the UI and one-click removable (§4.3); open question 2 asks whether it should land pending instead. |
 | A compromised worker triggers downloads | Low but severe | Workers get `sqs:SendMessage` on the status queue only — never `sns:Publish` (§4.3). A worker cannot make the system fetch anything. |
