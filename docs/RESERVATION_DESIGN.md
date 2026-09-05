@@ -1,6 +1,6 @@
 # Scheduling & Reservation — Design
 
-Status: **proposal**, not yet implemented. Revision 9.
+Status: **proposal**, not yet implemented. Revision 10.
 Researched and written 2026-09-04. All API observations were verified live on
 that date.
 
@@ -10,7 +10,15 @@ decides when to fetch it. "Schedule" from here on means only the old crontab.
 The service is the **reservation service** (one container, `reservation`),
 never "the scheduler"; its polling loop is **the poller**.
 
-Revision 9 traces the multi-part Radiko publish end to end (§5.5) and finds two
+Revision 10 settles **when** a multi-part episode is publishable (§5.6): on its
+**last** part, not its first. Gating on the first part would let a mid-broadcast
+tick publish a two-part episode of a four-part show — which downloads,
+concatenates and passes the truncation check, producing a plausible wrong file.
+Also records that Radiko publishes timefree availability flags (`ts_*_ng`,
+`failed_record`) with real signal — ~15% non-zero across 4,169 sampled
+programmes — used to warn in preview rather than to gate.
+
+Revision 9 traced the multi-part Radiko publish end to end (§5.5) and finds two
 things earlier revisions had wrong: the Lambda groups Radiko URLs **by station
 across the whole request**, so two episodes batched into one call would
 concatenate into a single file — hence **one request per episode, always**; and
@@ -154,8 +162,9 @@ Every reservable source is **on-demand with a multi-day availability window**:
 Radiko timefree 7 days; らじる per-episode `expires`; TVer per-episode `endAt`.
 
 So the poller never needs to fire at a precise moment. It wakes periodically,
-asks *"which reserved episodes are now available and not yet fetched?"*, and
-publishes those. Problem 3 disappears: a missed tick, a reboot, a week's
+asks *"which reserved episodes are now available and not yet fetched?"* — where
+*available* means **every part of the episode has aired**, not merely the first
+(§5.6) — and publishes those. Problem 3 disappears: a missed tick, a reboot, a week's
 downtime are all recovered on the next scan. Catch-up is what the normal loop
 does. It also gives **free bounded retry** — a failed fetch is simply not
 marked done, and the window is the natural deadline.
@@ -504,7 +513,7 @@ Three commitments:
 
 | Source | Reserve by | Availability | Expiry | Parts per episode |
 | ------ | ---------- | ------------ | ------ | --- |
-| Radiko | station + title match | `to` < now − grace | `ft` + 7 days | **1..n**, contiguous |
+| Radiko | station + title match | **last** part's `to` < now − grace (§5.6) | `ft` + 7 days | **1..n**, contiguous |
 | らじる | `radioSeriesId` | `contentStatus == "ready"` | `audio[].expires` | 1 |
 | TVer | `seriesID` + `seasonID`(s) | `type=="episode"` and `isAvailable` | `endAt` | 1 |
 | YouTube | *not reservable* | — | — | — |
@@ -1204,6 +1213,115 @@ whose part list **overlaps** an existing row's is the same episode under a
 corrected boundary, not a new one. Worth having, and worth a test, because the
 symptom is a silent duplicate recording rather than an error.
 
+### 5.6 When an episode becomes publishable
+
+*(From the review: "all parts have to be available when the worker sends the
+request, so the reservation worker has to wait until all parts are aired and
+available.")*
+
+Exactly so, and it is worth stating as a rule because the naive version is
+quietly wrong:
+
+> An episode is publishable when its **last** part has finished airing, plus a
+> grace — not its first.
+>
+> ```
+> publish_after = max(part.to for part in episode.parts) + grace
+> ```
+
+**Why the naive rule produces a plausible wrong file.** Suppose a tick runs at
+15:30 on Sunday and the resolver selects "parts whose `to` is in the past". It
+finds PART1 and PART2, groups them (they are contiguous), and publishes a
+two-part episode. The download succeeds, the concat succeeds, the truncation
+check passes — the file is internally consistent — and you get a two-hour
+recording of a four-hour show with nothing anywhere reporting a problem. This
+is the same failure shape as problem 4 in §1.1, arriving by a different route.
+
+So the gating is **per episode, not per part**: contiguity grouping (§5.2) runs
+over the whole episode as the table describes it, and the episode as a unit is
+then gated on its last part.
+
+**The table already contains the future parts, which is what makes this
+possible.** At 15:30 the weekly XML — six days forward (§3.1) — already lists
+PART4 at `ft=20260906160000`. The episode's full shape is known before it
+finishes airing, so the resolver can tell "four parts, one still to come" from
+"two parts, complete". Without the forward window this would be undecidable.
+
+#### Three states, and they unify across sources
+
+| State | Radiko | らじる | TVer | Action |
+| ----- | ------ | ------ | ---- | ------ |
+| **announced** | some part's `to` is still in the future | `contentStatus: "notyet"` | not listed yet | show in preview, publish nothing |
+| **ready** | all parts' `to` + grace have passed | `contentStatus: "ready"` | `isAvailable: true` | publish, as one request (§5.5) |
+| **expired** | first `ft` + 7 days | `audio[].expires` | `endAt` | give up and alert (§7) |
+
+Radiko is the only source without an explicit readiness flag, which is why it
+is the only one that needs a clock rule at all. For the other two the state is
+read, not computed.
+
+#### Grace is an optimisation; retry is the guarantee
+
+The grace covers two things: Radiko's timefree encode appearing after
+broadcast, and the programme table settling after a show that overran. Neither
+has a documented duration.
+
+That is survivable because **correctness does not depend on getting it right**.
+If the last part is not yet fetchable, `run_download` exhausts its attempts,
+the episode fails, the ledger row stays undone, and the next tick tries the
+whole episode again — §2.2's free retry, doing exactly its job.
+
+What the grace buys is avoiding that waste: a failed four-part publish
+re-downloads all four parts next tick, not just the missing one. So the default
+should be generous rather than tight — **10–15 minutes**, configurable per
+reservation for a station that turns out to be slow. Tuning it is a cost
+optimisation, never a correctness fix.
+
+> **A late-added part is the residual risk.** If the table gains a PART5 after
+> we publish, the ledger key (first `ft`) already matches and the episode is not
+> republished, so the recording is short by an hour. A generous grace shrinks
+> the window; the part-count drift check (§7) catches what slips through by
+> comparing against the reservation's recent history. Worth knowing that this
+> one degrades to a *short* recording rather than a wrong one.
+
+Waiting also makes §4.6's late-binding check sharper: by publish time the
+broadcast is over, so the table the worker re-reads is the corrected, final one
+rather than a mid-broadcast guess.
+
+#### Radiko publishes availability flags — use them to warn, not to gate
+
+Each `<prog>` carries five fields that look like exactly what this section
+needs. Sampled across 8 stations / 4,169 programmes on 2026-09-04:
+
+| Field | `0` | `1` | `2` |
+| ----- | --- | --- | --- |
+| `failed_record` | 4169 | — | — |
+| `ts_in_ng` / `ts_out_ng` | 3539 | 3 | 627 |
+| `tsplus_in_ng` / `tsplus_out_ng` | 3526 | 3 | 640 |
+
+So roughly **15% of programmes are flagged non-zero** — this is real signal, not
+a vestigial field. The programmes it lands on are recognisable ones:
+`テレフォン人生相談` (LFR) has `ts_*_ng = 2` on both in- and out-of-area, and
+`オードリーのオールナイトニッポン` has `tsplus_*_ng = 2` while `ts_*_ng` stays 0
+— consistent with the naming, where `ts` is timefree and `tsplus` the Premium
+extended window, `in`/`out` being in-area and areafree.
+
+**But the semantics are inferred from the field names, not from documentation**,
+and the `1` value appears only 3 times in 4,169 — too rare to interpret. So
+they are used as a **pre-flight warning, never as a gate**:
+
+* **In `preview` and the UI**, when a reservation matches programmes flagged
+  NG, say so: *"this programme is marked unavailable for timefree; recording
+  will probably fail."* Caught at reservation time, which is when it is
+  cheap.
+* **At publish time**, log the flag and publish anyway — because a misread flag
+  silently suppressing a recording is a worse failure than a wasted attempt,
+  and §7's heartbeat catches persistent failure regardless.
+
+If experience shows the reading holds, promoting it to a hard skip is a
+one-line change. Getting it wrong in that direction is not recoverable, which
+is why it starts as advice.
+
+
 ---
 
 ## 6. The UI
@@ -1278,6 +1396,7 @@ crashes. Three defences, surfaced as the health chip in §6:
    retired, and the programme API changing shape.
 2. **Part-count drift.** A Radiko episode that resolves to a different number
    of parts than the reservation's recent history is *recorded but flagged*.
+   This is also what catches a part added to the table after publishing (§5.6).
    Usually a 拡大版 — occasionally a match that has gone wrong. Cheap to
    compute from the `parts` column (§5.4) and it is the earliest visible sign
    of the failure mode §3.1 warns about.
