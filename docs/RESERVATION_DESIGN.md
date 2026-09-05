@@ -1,6 +1,6 @@
 # Scheduling & Reservation — Design
 
-Status: **proposal**, not yet implemented. Revision 8.
+Status: **proposal**, not yet implemented. Revision 9.
 Researched and written 2026-09-04. All API observations were verified live on
 that date.
 
@@ -10,7 +10,14 @@ decides when to fetch it. "Schedule" from here on means only the old crontab.
 The service is the **reservation service** (one container, `reservation`),
 never "the scheduler"; its polling loop is **the poller**.
 
-Revision 8 adopts the review's framing that this is **a new worker for the
+Revision 9 traces the multi-part Radiko publish end to end (§5.5) and finds two
+things earlier revisions had wrong: the Lambda groups Radiko URLs **by station
+across the whole request**, so two episodes batched into one call would
+concatenate into a single file — hence **one request per episode, always**; and
+the Lambda builds its payload field by field, so `expect_title` would have been
+silently dropped and the §4.6 check would never have run.
+
+Revision 8 adopted the review's framing that this is **a new worker for the
 programme**, not a control plane (§2.4); gives each source its own programme
 queue while keeping one process for now, with the split trigger and the
 already-partitioned ledger documented (§4.1a); and settles TVer season
@@ -135,10 +142,11 @@ So the reservation service does not teach the Lambda about reservations. Its
 only interaction with the dispatch path is the one a human already has: it
 POSTs URLs to `/publish`.
 
-> **What changes in `api-gw`:** one new URL class — programme URLs get their own
-> type (§2.4, §4.3). No new route, no reservation logic, no knowledge of
-> schedules; it keeps doing the one thing it does, over one more URL shape.
-> Everything else in §4 is new *subscriptions*.
+> **What changes in `api-gw`:** one new URL class (programme URLs get their own
+> type, §2.4/§4.3) and one field forwarded (`expect_title`, §5.5). No new
+> route, no reservation logic, no knowledge of schedules; it keeps doing the
+> one thing it does, over one more URL shape and one more field. Everything
+> else in §4 is new *subscriptions*.
 
 ### 2.2 Poll a window; never fire at an instant
 
@@ -791,7 +799,9 @@ only the download needs regional access.
 
 ### 4.6 The Radiko late-binding check
 
-The concrete form of §2.3, and the only worker change the design needs. The
+The concrete form of §2.3. Revision 7 called this "the only worker change the
+design needs"; §5.5 shows that was wrong — the Lambda must forward the new
+field or the check silently never runs. The
 published message gains one **optional** field:
 
 ```jsonc
@@ -1062,30 +1072,137 @@ detection is the actual guarantee against a duplicate file, so losing the
 ledger — or skipping observation entirely — degrades to some wasted publishes,
 not to duplicate recordings.
 
-### 5.5 Publish payloads
+### 5.5 Publishing a multi-part Radiko episode
 
-Nothing new on the wire except the optional `expect_title` of §4.6.
+*(From the review: "how do you plan to send a request to start downloading and
+concatenating from the reservation worker?")*
+
+The short answer is that the existing path already does it, and the programme
+worker sends what the crontab sent. But tracing it through the real Lambda
+turned up two things that were not right in earlier revisions, so here is the
+whole hop.
+
+**The request.** One `POST /publish`, carrying every part of one episode:
 
 ```jsonc
-// Radiko — one episode, four parts, one request, one SQS message,
-// concatenated by the existing ffmpeg path in record_radiko().
 { "urls": [
     "https://radiko.jp/#!/ts/FMJ/20260906130000",
     "https://radiko.jp/#!/ts/FMJ/20260906140000",
     "https://radiko.jp/#!/ts/FMJ/20260906150000",
     "https://radiko.jp/#!/ts/FMJ/20260906160000"
   ],
-  "description": "TOKIO HOT 100",
-  "expect_title": "TOKIO HOT 100" }
+  "description":  "TOKIO HOT 100",   // filename stem
+  "expect_title": "TOKIO HOT 100" }  // late-binding check, §4.6
+```
 
-// らじる — canonical episode URL; the worker resolves it fresh at download
+**What the Lambda does with it.** `handleRadikoUrls` parses each URL with
+`/radiko\.jp\/#!\/ts\/([A-Za-z0-9_-]+)\/(\d{14})/`, truncates `ft` to 12
+digits, buckets by station, then emits **one SNS message per station** with the
+start times sorted:
+
+```jsonc
+{ "type": "radiko", "station_id": "FMJ",
+  "start_times": ["202609061300","202609061400","202609061500","202609061600"],
+  "description": "TOKIO HOT 100" }
+```
+
+**What the worker does.** `record_radiko(station_id, start_times, description)`
+downloads each part to `part{i}-{ft}-{station}`, then — because there is more
+than one — writes a concat list and runs
+`ffmpeg -f concat -safe 0 -i … -c copy` into
+`{first_ft}-{station}-{description}.m4a`, checks it for truncation, delivers it,
+and removes the parts. That is unchanged code; it is what the four-argument
+crontab line has always driven.
+
+#### Finding 1 — one request per episode, never a batch
+
+The Lambda groups by **station**, across the whole request. So if a tick makes
+two FMJ episodes available and the worker batches them into one `/publish`
+call, they land in **one** message with five or eight start times, and
+`record_radiko` concatenates them into a **single file**. Two programmes, one
+recording, no error.
+
+So this is a hard rule for the programme worker:
+
+> **One `/publish` request per episode.** Never batch episodes, not even for
+> the same station on the same tick. The unit of a request is the unit of a
+> file.
+
+It also settles `description`, which is per-request and names the output: with
+one episode per request there is exactly one right value for it.
+
+The cost is one API Gateway call per episode instead of per tick. At a handful
+of episodes a day that is nothing — but it is why the `max_per_tick` cap in
+§10 exists, because a first-run backfill across twenty reservations and a
+seven-day window could otherwise walk into the 100/day quota.
+
+#### Finding 2 — `expect_title` needs a Lambda change after all
+
+§4.6 claimed the late-binding check was "the only worker change the design
+needs". That was wrong. The Lambda builds the Radiko payload field by field:
+
+```js
+const payload = { type: 'radiko', station_id: stationId, start_times: startTimes };
+if (description) payload.description = description;
+```
+
+Unknown keys are not forwarded, so `expect_title` would be **silently
+dropped** and the check would never run — a failure mode that looks exactly
+like success. It needs the matching two lines, with the same strictness
+`force` already gets:
+
+```js
+if (typeof expect_title === 'string' && expect_title.length <= 200) {
+    payload.expect_title = expect_title;
+}
+```
+
+Validated as a string and length-capped because it crosses a trust boundary;
+it is only ever compared against programme-table titles, never passed to a
+shell or to yt-dlp.
+
+> **Why not reuse `description`, which already passes through?** Because they
+> are not the same thing. For TOKIO HOT 100 they happen to coincide, but a
+> reservation may well be described as "Sunday Long Show" while the programme
+> is titled "SAISON CARD TOKIO HOT 100(PART1)". `description` is what the user
+> wants the file called; `expect_title` is what the resolver matched on.
+> Collapsing them would break the check on exactly the reservations whose
+> naming is least predictable.
+
+#### The matcher must be shared code, not reimplemented
+
+`expect_title` is `TOKIO HOT 100` while the table says
+`SAISON CARD TOKIO HOT 100(PART1)`, so the worker's check is the same
+substring-after-NFKC comparison the resolver used (§5.3) — and it must be
+*literally* the same function, in `shared/`, not a second implementation. Two
+copies of a fuzzy matcher drift, and when they disagree the symptom is a
+recording that fails for no visible reason.
+
+The same applies to the contiguity grouping of §5.2: the worker re-derives the
+part run at download time using the rule the resolver applied at publish time.
+One implementation, called from both ends.
+
+#### The other two sources need none of this
+
+```jsonc
+// らじる — one canonical episode URL; the worker resolves it fresh at download
 { "urls": ["https://www.nhk.jp/p/rs/242V3Q87GK/episode/re/K65RLNYQZ7/"] }
 
-// TVer
+// TVer — one episode id
 { "urls": ["https://tver.jp/episodes/epliwk4kpb"] }
 ```
 
-Never `force` (§2.5).
+Both are single-part, so there is nothing to group and nothing to concatenate.
+Never `force`, on any of them (§2.5).
+
+#### Edge: a shifted first part changes the ledger key
+
+The key is `radiko:{station}:{ft of first part}` (§5.4), so if the table is
+later corrected to start the programme half an hour earlier, the key changes
+and the episode looks new. The `parts` column is the cheap fix: a candidate
+whose part list **overlaps** an existing row's is the same episode under a
+corrected boundary, not a new one. Worth having, and worth a test, because the
+symptom is a silent duplicate recording rather than an error.
 
 ---
 
@@ -1267,7 +1384,7 @@ not be attempted at all before this research.
 | Database file lost or corrupted | Low | Degrades to re-downloads, not loss: the ledger regenerates from the sources. Reservations are the irreplaceable part — `VACUUM INTO` on a timer, plus the API export (§5.1). |
 | SQLite on a NAS mount | Low but severe | POSIX locking is unreliable over NFS/SMB. Documented constraint (§5.1); the volume must be local. |
 | The tick thread dies silently | Medium | `try/except` per pass, plus a `last_tick_at` surfaced in the UI and alerted on (§5.1, §7). |
-| API GW quota (100/day, 2 rps, burst 5) | Low | Ticks do not call the API; only publishes do. Note that under §4.1 both manual and reserved publishes count. Cap publishes per tick. |
+| API GW quota (100/day, 2 rps, burst 5) | Low | Ticks do not call the API; only publishes do — but §5.5 makes that one call *per episode*, so a first-run backfill is the realistic risk. Cap publishes per tick. |
 | Clock | — | Japan has no DST. Store aware datetimes; normalise to JST once, at the edge. |
 
 ---
