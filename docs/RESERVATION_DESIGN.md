@@ -1,6 +1,6 @@
 # Scheduling & Reservation — Design
 
-Status: **proposal**, not yet implemented. Revision 10.
+Status: **proposal**, not yet implemented. Revision 11.
 Researched and written 2026-09-04. All API observations were verified live on
 that date.
 
@@ -10,7 +10,11 @@ decides when to fetch it. "Schedule" from here on means only the old crontab.
 The service is the **reservation service** (one container, `reservation`),
 never "the scheduler"; its polling loop is **the poller**.
 
-Revision 10 settles **when** a multi-part episode is publishable (§5.6): on its
+Revision 11 sets the publish grace to **2 hours** by default, and scopes it to
+Radiko only — らじる and TVer are gated on a flag that is read rather than
+computed, so a grace would delay them for nothing (§5.6).
+
+Revision 10 settled **when** a multi-part episode is publishable (§5.6): on its
 **last** part, not its first. Gating on the first part would let a mid-broadcast
 tick publish a two-part episode of a four-part show — which downloads,
 concatenates and passes the truncation check, producing a plausible wrong file.
@@ -513,7 +517,7 @@ Three commitments:
 
 | Source | Reserve by | Availability | Expiry | Parts per episode |
 | ------ | ---------- | ------------ | ------ | --- |
-| Radiko | station + title match | **last** part's `to` < now − grace (§5.6) | `ft` + 7 days | **1..n**, contiguous |
+| Radiko | station + title match | **last** part's `to` + 2 h grace (§5.6) | `ft` + 7 days | **1..n**, contiguous |
 | らじる | `radioSeriesId` | `contentStatus == "ready"` | `audio[].expires` | 1 |
 | TVer | `seriesID` + `seasonID`(s) | `type=="episode"` and `isAvailable` | `endAt` | 1 |
 | YouTube | *not reservable* | — | — | — |
@@ -1041,6 +1045,7 @@ the YAML-equivalent, so it can be kept in git alongside the code (§5.1).
     "weekday": "sun"                          // optional guard against reruns
   },
   "description": "TOKIO HOT 100", // episode title / filename stem
+  "grace": null,                  // override the 2 h default; Radiko only (§5.6)
   "once": false,
   "until": null
 }
@@ -1252,36 +1257,62 @@ finishes airing, so the resolver can tell "four parts, one still to come" from
 | State | Radiko | らじる | TVer | Action |
 | ----- | ------ | ------ | ---- | ------ |
 | **announced** | some part's `to` is still in the future | `contentStatus: "notyet"` | not listed yet | show in preview, publish nothing |
-| **ready** | all parts' `to` + grace have passed | `contentStatus: "ready"` | `isAvailable: true` | publish, as one request (§5.5) |
+| **ready** | all parts' `to` + grace (2 h, §5.6) have passed | `contentStatus: "ready"` | `isAvailable: true` | publish, as one request (§5.5) |
 | **expired** | first `ft` + 7 days | `audio[].expires` | `endAt` | give up and alert (§7) |
 
 Radiko is the only source without an explicit readiness flag, which is why it
 is the only one that needs a clock rule at all. For the other two the state is
 read, not computed.
 
-#### Grace is an optimisation; retry is the guarantee
+#### Grace: 2 hours, and it applies to Radiko only
 
-The grace covers two things: Radiko's timefree encode appearing after
-broadcast, and the programme table settling after a show that overran. Neither
-has a documented duration.
+**Default: `grace = 2h`.** It is deliberately generous, and generosity is
+close to free here.
 
-That is survivable because **correctness does not depend on getting it right**.
-If the last part is not yet fetchable, `run_download` exhausts its attempts,
-the episode fails, the ledger row stays undone, and the next tick tries the
-whole episode again — §2.2's free retry, doing exactly its job.
+The grace covers two things, neither of which has a documented duration:
+Radiko's timefree encode appearing after broadcast, and the **programme table
+settling** after a show that overran or was displaced.
 
-What the grace buys is avoiding that waste: a failed four-part publish
-re-downloads all four parts next tick, not just the missing one. So the default
-should be generous rather than tight — **10–15 minutes**, configurable per
-reservation for a station that turns out to be slow. Tuning it is a cost
-optimisation, never a correctness fix.
+What it costs is latency — the file lands up to two hours after the show ends.
+That is worth almost nothing for an on-demand recorder: nobody is waiting on
+it, and two hours out of a seven-day timefree window is 1.2% of the budget.
 
-> **A late-added part is the residual risk.** If the table gains a PART5 after
-> we publish, the ledger key (first `ft`) already matches and the episode is not
-> republished, so the recording is short by an hour. A generous grace shrinks
-> the window; the part-count drift check (§7) catches what slips through by
-> comparing against the reservation's recent history. Worth knowing that this
-> one degrades to a *short* recording rather than a wrong one.
+What it buys is the removal of two failure modes that are genuinely annoying:
+
+* **A wasted multi-part re-download.** If the last part is not yet fetchable,
+  the whole episode fails and the next tick re-downloads *all* of it, not just
+  the missing part. A tight grace makes that a routine event; two hours makes
+  it rare.
+* **A part added after publishing.** The residual risk below. At 10 minutes it
+  is a real possibility; at two hours the table has long since settled.
+
+> **Correctness never depended on this number.** If the last part is still not
+> fetchable, `run_download` exhausts its attempts, the episode fails, the
+> ledger row stays undone, and the next tick tries the whole episode again —
+> §2.2's free retry doing exactly its job. Tuning the grace is a cost
+> optimisation; it is not what makes the design correct. That is why picking a
+> large value carries no risk, and why revision 10's tighter 10–15 minutes was
+> the wrong instinct: it optimised the cheap axis.
+
+**It is a Radiko-only concept.** らじる and TVer are gated on a flag that is
+read, not computed — `contentStatus: "ready"` and `isAvailable` — so a grace
+would delay them for no reason at all. Applying one globally would be a bug,
+not a conservative setting.
+
+`grace` is a per-reservation override on top of the default, for a station that
+turns out to be unusually slow, or for a programme someone wants promptly.
+
+> **A late-added part is the residual risk, now much reduced.** If the table
+> gains a PART5 *after* we publish, the ledger key (first `ft`) already matches
+> and the episode is not republished, so the recording is short by an hour.
+> Two hours of settling makes this unlikely rather than merely improbable, and
+> the part-count drift check (§7) catches what still slips through. Worth
+> knowing it degrades to a *short* recording rather than a wrong one.
+
+> **The UI has to show this**, or it reads as a bug. An episode that aired 40
+> minutes ago and has not been fetched looks broken unless the reservation view
+> says when it will be: *"airs Sun 13:00–17:00 · fetches ~19:00"*. Cheap to
+> render, and it turns a two-hour silence from a worry into a schedule.
 
 Waiting also makes §4.6's late-binding check sharper: by publish time the
 broadcast is over, so the table the worker re-reads is the corrected, final one
@@ -1349,8 +1380,8 @@ next 7 days of matches, updating as you type. Crucially it shows the *grouping*,
 not just the hits, so a user can see that four rows became one episode:
 
 ```text
-Sun 06 Sep   TOKIO HOT 100          4 parts  13:00–17:00   → 1 file
-Sun 13 Sep   TOKIO HOT 100          4 parts  13:00–17:00   → 1 file
+Sun 06 Sep   TOKIO HOT 100   4 parts  13:00–17:00   fetches ~19:00   → 1 file
+Sun 13 Sep   TOKIO HOT 100   4 parts  13:00–17:00   fetches ~19:00   → 1 file
 ```
 
 That single view is what makes §5.2 trustworthy: it makes the contiguity rule
