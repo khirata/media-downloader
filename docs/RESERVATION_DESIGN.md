@@ -1,6 +1,6 @@
 # Scheduling & Reservation — Design
 
-Status: **proposal**, not yet implemented. Revision 6.
+Status: **proposal**, not yet implemented. Revision 7.
 Researched and written 2026-09-04. All API observations were verified live on
 that date.
 
@@ -10,7 +10,15 @@ decides when to fetch it. "Schedule" from here on means only the old crontab.
 The service is the **reservation service** (one container, `reservation`),
 never "the scheduler"; its polling loop is **the poller**.
 
-Revision 6 restructures the problem statement (§1). It previously framed
+Revision 7 reframes the dispatch model (§2.4): there are **two request types**
+— an *episode* URL, which is what runs today, and a *programme* URL, which
+denotes a set including episodes not yet published. That is a type distinction
+rather than an intent ambiguity, so `api-gw` gains one URL class and routes
+programme requests to the reservation service (§4.3). It also demotes
+"observe every download" to an explicitly optional bonus (§2.4a) — revision 5
+over-claimed it as load-bearing when the workers already dedup.
+
+Revision 6 restructured the problem statement (§1). It previously framed
 everything as a defect of the crontab, which missed the larger problem: for
 らじる★らじる and TVer there is no crontab at all, and **a person is doing the
 polling by hand** — an errand that recurs forever, per series, and silently
@@ -109,7 +117,7 @@ stops being yours.
 
 ---
 
-## 2. Four observations that shape the design
+## 2. The observations that shape the design
 
 ### 2.1 The reservation service is a publisher — and `url-publisher` stays a URL pusher
 
@@ -120,8 +128,10 @@ So the reservation service does not teach the Lambda about reservations. Its
 only interaction with the dispatch path is the one a human already has: it
 POSTs URLs to `/publish`.
 
-> **What changes in `api-gw`: nothing.** No new route, no new URL class, no new
-> Lambda logic. §4 achieves the review's fan-out with new *subscriptions* only.
+> **What changes in `api-gw`:** one new URL class — programme URLs get their own
+> type (§2.4, §4.3). No new route, no reservation logic, no knowledge of
+> schedules; it keeps doing the one thing it does, over one more URL shape.
+> Everything else in §4 is new *subscriptions*.
 
 ### 2.2 Poll a window; never fire at an instant
 
@@ -159,34 +169,76 @@ timeout, or wait for an offline worker. Hours can pass.
 | らじる | **Already.** `download_radiru` calls `resolve_radiru_url` at download time; nothing is frozen at publish. |
 | TVer | **Not needed.** An episode id is immutable once posted. |
 
-### 2.4 Observe every download, not just the reserved ones
+### 2.4 There are two kinds of request, and the dispatcher already sorts URLs
 
-*(From the review: "even when a request goes directly to a worker, the
-dispatcher still pushes it to the reservation service for recording.")*
+*(From the review: "There are two types of requests to the SNS. One is the
+episode URL, which is what currently runs. The other is the programme, or group
+of episodes including future ones.")*
 
-This is the right call and it is worth stating as a principle. The reservation
-service subscribes to the same messages the workers receive, so its history
-covers **every** download — the extension, curl, an old cron line, and its own
-publishes alike.
+This is a better frame than revision 5's, and it dissolves an objection I had
+raised. The distinction is not *what did the user mean* — it is **what the URL
+denotes**:
 
-The payoff is not bookkeeping. It is **dedup across the manual/automatic
-boundary**: download an episode by hand today and the reservation that also
-covers it will not fetch it again tomorrow, because they resolve to the same
-ledger key (§5.4). Without observation those two paths cannot see each other.
+| Request type | Denotes | Example | Routes to |
+| ------------ | ------- | ------- | --------- |
+| **Episode** | one downloadable thing that exists **now** | `radiko.jp/#!/ts/FMJ/20260906130000`, `tver.jp/episodes/epliwk4kpb`, `nhk.jp/p/rs/S/episode/re/E/`, any YouTube URL | a worker queue — exactly as today |
+| **Programme** | a **set**, including episodes not yet published | `tver.jp/series/srusndh59f`, `nhk.jp/p/rs/242V3Q87GK/` | the reservation queue |
 
-> **The loop hazard, and the rule that removes it.** Fanning out to the
-> reservation service means its own publishes come back to it. That is only a
-> loop if observing causes publishing, so:
+That is a **type** distinction, not an intent ambiguity, and sorting URLs by
+type is precisely what `api-gw` already does. Teaching it that
+`tver.jp/series/…` is a programme is the same kind of rule as
+`tver.jp/episodes/…` being a TVer episode. It does not teach the Lambda about
+reservations; it teaches it one more URL shape, which is its job (§4.3).
+
+> **Correcting revision 5.** I argued the Lambda should *not* classify
+> programme pages, because a series URL is ambiguous between "download now" and
+> "follow forever", and because `nhk.jp/p/rs/<series>/` already means the
+> former. The ambiguity argument does not survive this framing — a programme
+> URL denotes a set, and fetching the currently-available members of that set
+> is just the first thing you do with it. The regression argument was also
+> overstated; see §4.3.
+
+**Radiko has no programme URL**, which is worth stating because it shapes the
+UI. A timefree URL addresses one hour; the `<prog>` entry's own `<url>` points
+at the *broadcaster's* site (`j-wave.co.jp/original/tokiohot100/`, verified
+2026-09-04) and its `master_id` is empty. So there is nothing publishable that
+denotes "TOKIO HOT 100, ongoing". Radiko reservations are created in the UI
+(§6) — which is where the programme grid lives anyway.
+
+### 2.4a Recording every download — a bonus, not a foundation
+
+Revision 5 made "the reservation service observes every download" a load-bearing
+principle, justified by dedup across the manual/automatic boundary. **That was
+over-claimed**, and the review is right to call it a bonus.
+
+The workers already dedup: a re-published episode whose file is still in
+`DOWNLOAD_DIR` is skipped by yt-dlp, `process_message` returns `"duplicate"`,
+and the message is dropped. So a manual download that a reservation later covers
+costs one wasted publish, not a duplicate file. Nothing breaks without
+observation.
+
+What it does buy is a **complete history in one place** — every download, manual
+or reserved, with the worker that ran it — which makes the History view (§6)
+worth opening and saves that wasted publish. Good, but optional.
+
+So it is built as a **separate, deletable subscription** (§4.3) rather than
+being wired into the core. Two consequences worth having: the loop hazard below
+only exists if the bonus is enabled, and a deployment that does not want it
+omits one Terraform resource rather than disabling a code path.
+
+> **The loop hazard, and the rule that removes it.** If the service subscribes
+> to episode types, its own publishes come back to it. That is only a loop if
+> observing causes publishing, so:
 >
 > **Observation writes history and nothing else.** A publish happens only from
-> (a) a reservation matching on a poll tick, or (b) an explicit human action.
-> No inbound message ever creates a reservation or triggers a publish.
+> (a) a reservation matching on a poll tick, or (b) an explicit human action. No
+> inbound message ever triggers a publish. This is a design rule, enforced by
+> having no code path from the SQS consumer to the publisher. History rows
+> upsert by ledger key, so the service seeing its own publish return costs one
+> idempotent write.
 >
-> This is a design rule, not a filter policy, which is why it belongs here
-> rather than in the Terraform. History rows upsert by ledger key, so the
-> service seeing its own publish return costs one idempotent write. The
-> transport that carries it — and the reason worker status does *not* travel
-> the same way — is §4.3.
+> A programme request is *not* an exception: it creates a reservation, and the
+> reservation is what publishes, on the next tick.
 
 ### 2.5 `force` is a human action, one-shot, never reservable
 
@@ -396,60 +448,57 @@ Three commitments:
 
 ## 4. Architecture
 
-### 4.1 One entry point, with fan-out to the reservation service
+### 4.1 One entry point, two request types
 
-*(From the review: "How about all requests go to the api-gw, and the SNS
-dispatcher pushes the request to the reservation service? Compare with your
-plan.")*
+All requests go to `api-gw`, which classifies the URL and publishes to SNS.
+Subscriptions then sort by type — which is what the topic already does, with one
+new destination:
 
-**Adopt it.** It is better than revision 2's design, and the comparison is
-worth being explicit about:
+| Type on the topic | Queue | Consumer |
+| ----------------- | ----- | -------- |
+| `radiko` | radio | radio worker |
+| `tver`, `youtube` | video | video worker |
+| **`programme`** *(new)* | **reservation** | reservation service |
+| *(those three again)* | **reservation-observe** *(optional, §2.4a)* | reservation service |
 
-| | Rev 2 (own intake + status queue) | Review's proposal (fan-out) |
-| --- | --- | --- |
-| History covers manual downloads | ✗ — only what the poller published | ✓ **every** download |
-| Dedup across manual/automatic | ✗ | ✓ (§2.4) |
-| `api-gw` code changes | none | none |
-| New infrastructure | 1 status queue | 2 queues + 1 subscription |
-| Loop risk | none | real, removed by the §2.4 rule |
-| Worker → service feedback | separate status queue | separate status queue (§4.3) |
-
-The decisive column is the second: without observation, a hand-published
-episode and a reserved one cannot see each other, and the ledger is only ever
-half the truth. Revision 2's status queue survives unchanged alongside the new
-observation queue; §4.3 explains why they stay separate.
+The first three rows are the system; the fourth is the bonus. A deployment that
+does not want a complete download history simply does not create that
+subscription, and nothing else changes.
 
 ```mermaid
 graph TD
     EXT["Extension / curl / cron"]
-    WEB["reservation-web (UI + API)"]
-    POLL["reservation-poller"]
-    DB[("reservations.sqlite")]
-    API["api-gw + Lambda<br/>UNCHANGED"]
+    RES["reservation service<br/>UI + poller + SQLite"]
+    API["api-gw + Lambda<br/>classifies URLs"]
     SNS["SNS dispatcher"]
     QR["radio SQS"]
     QV["video SQS"]
-    QO["reservation-observe SQS"]
+    QP["reservation SQS"]
+    QO["reservation-observe SQS<br/>optional"]
     QS["reservation-status SQS"]
     W1["radio worker · JP"]
-    W2["video worker · JP/any"]
+    W2["video worker"]
     CAT["Programme tables"]
 
-    EXT -->|"POST /publish"| API
-    WEB <--> DB
-    POLL <--> DB
-    CAT -.->|"read, region-free"| POLL
-    POLL ==>|"POST /publish"| API
+    EXT -->|"episode or programme URL"| API
     API --> SNS
     SNS -->|"radiko"| QR
     SNS -->|"tver / youtube"| QV
-    SNS -->|"radiko / tver / youtube"| QO
+    SNS -->|"programme"| QP
+    SNS -.->|"radiko / tver / youtube"| QO
     QR --> W1
     QV --> W2
+    QP -->|"long poll"| RES
+    QO -.->|"long poll"| RES
     W1 & W2 -->|"SendMessage"| QS
-    QO -->|"long poll"| POLL
-    QS -->|"long poll"| POLL
+    QS -->|"long poll"| RES
+    CAT -.->|"read, region-free"| RES
+    RES ==>|"POST /publish (episode URLs)"| API
 ```
+
+Note what the reservation service publishes: **episode URLs**. It converts a
+programme request into episode requests, which is the whole job. Its output is
+the request type that already worked.
 
 ### 4.2 No `region` field
 
@@ -471,7 +520,7 @@ no Lambda change, nothing to migrate.
 
 Recorded here so the trap is visible before someone deploys the second worker.
 
-### 4.3 The transport: two queues, and no inbound connections
+### 4.3 The transport: three queues, and no inbound connections
 
 *(From the review: "How do you plan to establish the connection from dispatcher
 to the reservation system? This is not a real-time system, so the communication
@@ -498,14 +547,15 @@ downloads. The worker is the **least-trusted component in the system**: it runs
 yt-dlp against remote content, in a container, on a host that may not be the
 user's. It should not be able to make the system fetch things.
 
-So the two links use different mechanisms, and get their own queues:
+So the inbound links use different mechanisms, and get their own queues:
 
 | Queue | Fed by | Carries | Grant |
 | ----- | ------ | ------- | ----- |
-| `reservation-observe` | **SNS subscription** on the existing topic | every dispatched download (§2.4) | none — SNS writes via a queue policy |
+| `reservation` | **SNS subscription**, `type: ["programme"]` | programme requests (§2.4) | none — SNS writes via a queue policy |
+| `reservation-observe` | **SNS subscription**, the three episode types — *optional* (§2.4a) | every dispatched download | none — same |
 | `reservation-status` | **Workers, `sqs:SendMessage`** | job outcomes | `sqs:SendMessage` on this one queue ARN |
 
-Two queues rather than one, for a reason worth the extra Terraform: it makes a
+Keeping worker status on a queue of its own is worth the extra Terraform: it makes a
 **trust boundary** out of the transport. Anything arriving on
 `reservation-observe` was delivered by SNS and is a faithful echo of what the
 dispatcher routed. Anything on `reservation-status` was written by a worker and
@@ -519,12 +569,13 @@ they arrived on, which is a weaker guarantee for no real saving.)
 
 **Terraform delta**, all of it additive:
 
-* Two `aws_sqs_queue` resources plus queue policies.
-* One `aws_sns_topic_subscription` on `reservation-observe`, with
-  `filter_policy = {type: ["radiko", "tver", "youtube"]}`,
-  `filter_policy_scope = "MessageBody"`, `raw_message_delivery = true` — the
-  same shape as the two subscriptions that already exist. Note `status` is
-  **not** in this list any more: status never touches the topic.
+* Three `aws_sqs_queue` resources plus queue policies — two, if the §2.4a bonus is skipped.
+* Two `aws_sns_topic_subscription` resources — `{type: ["programme"]}` on
+  `reservation`, and `{type: ["radiko","tver","youtube"]}` on
+  `reservation-observe` (the optional one). Both use
+  `filter_policy_scope = "MessageBody"` and `raw_message_delivery = true`, the
+  same shape as the two that already exist. Note `status` appears in neither:
+  it never touches the topic.
 * One statement added to each worker's existing IAM user policy:
   `sqs:SendMessage` on the `reservation-status` ARN. Nothing removed.
 * An IAM user for the reservation service with `ReceiveMessage` /
@@ -579,6 +630,35 @@ warning (§7) fires. Conversely an unparseable message is logged and deleted
 rather than left to redeliver forever; nothing on these queues is precious
 enough to justify a stuck consumer, and a dropped status is recoverable while a
 blocked queue is not.
+
+**The Lambda gains programme-URL classification** — one rule per source, the
+same kind it already applies:
+
+```js
+// alongside the existing episode rules
+/^https?:\/\/tver\.jp\/series\/[0-9a-z]+/i                         → "programme"
+/^https?:\/\/www\.nhk\.jp\/p\/(?:[^/?#]+\/)?rs\/[\dA-Za-z]+\/?$/i  → "programme"
+//   note the anchored end: with /episode/re/… it stays an episode request
+```
+
+Radiko contributes no rule, per §2.4.
+
+> **The behaviour change this makes, stated plainly.** Today
+> `nhk.jp/p/rs/<series>/` publishes as `type: radiko` and the radio worker
+> downloads every episode currently in 聞き逃し. Under this rule it becomes a
+> programme request instead, and creates a reservation.
+>
+> Revision 5 called that a silent regression and used it to argue against the
+> whole idea. That was wrong on both counts. The new behaviour is a
+> **superset** — the reservation resolves immediately on creation, so the same
+> currently-available episodes are still fetched, and future ones are too. And
+> it is not silent: the reservation appears in the UI and can be deleted in one
+> click.
+>
+> The one real difference is that publishing a series URL now leaves something
+> behind. That is worth a line in the README, not a reason to avoid the
+> feature — and for the らじる series URL specifically it is almost certainly
+> what the user wanted in the first place.
 
 ### 4.4 Publishing: HTTP to `/publish`, not direct SNS
 
@@ -866,15 +946,17 @@ One row per **episode**, keyed by a stable identity:
 | TVer | `tver:{episodeId}` |
 
 Columns: `key`, `reservation_id` (**null for a manual download** — that is what
-makes §2.4's cross-boundary dedup work), `title`, `parts` (the `ft` list, so a
+makes the §2.4a history complete), `title`, `parts` (the `ft` list, so a
 boundary change is visible after the fact), `published_at`, `status`
 (`published` / `succeeded` / `failed`), `manual_oneshot` (set for an observed
 `force`, §2.5), `attempts`, `expires_at`, `worker`.
 
 The key is derivable from a *published URL* as well as from a resolver, which
-is precisely why observation (§2.4) yields dedup rather than just a log. The
-workers' filename-based duplicate detection stays as a second line of defence,
-so losing the ledger degrades to harmless re-downloads.
+is what lets the optional observation (§2.4a) match a manual download to a
+reservation rather than just logging it. The workers' filename-based duplicate
+detection is the actual guarantee against a duplicate file, so losing the
+ledger — or skipping observation entirely — degrades to some wasted publishes,
+not to duplicate recordings.
 
 ### 5.5 Publish payloads
 
@@ -938,7 +1020,7 @@ visible, so a stray sponsor-prefix change or an accidental match shows up as
 `contentStatus` and `expires` per episode (§3.2).
 
 **History** — the ledger, filterable, showing manual downloads alongside
-reserved ones (§2.4) and the worker that reported each result, with a
+reserved ones (§2.4a, when enabled) and the worker that reported each result, with a
 one-click re-queue that republishes **without** `force` (§2.5).
 
 **Workers** — last-seen and last-result per worker, from the status messages of
@@ -956,8 +1038,11 @@ Notes on shape:
   `backfill`), sharing the resolver library with the web app. It is just no
   longer what a person uses day to day.
 
-The **Chrome extension is untouched** and stays a URL publisher (§2.1, §4.3).
-The UI's own programme browser covers reserve-from-the-page without it.
+The **Chrome extension is untouched** and stays a URL publisher — and now gets
+reserve-from-the-page for free: publishing a series URL from the page you are
+looking at *is* the reservation (§2.4). No new button, no second endpoint. The
+UI's programme browser remains the only route for Radiko, which has no
+programme URL to publish.
 
 ---
 
@@ -1009,10 +1094,17 @@ the pure-resolver split in §4.7 is what makes it possible.
 * **`force` containment (§2.5)** — an observed `force` message writes history
   and creates no reservation; a re-queue publishes without `force`; a
   reservation record rejects a `force` key.
-* **Observation and dedup (§2.4)** — a manual publish of an episode that a
-  reservation also covers results in exactly one download; observing the
-  service's own publish is idempotent; no inbound message ever causes an
-  outbound publish.
+* **Programme-URL routing (§4.3)** — `tver.jp/series/…` and a bare
+  `nhk.jp/p/rs/<id>/` classify as `programme`; `nhk.jp/p/rs/<id>/episode/re/<id>/`
+  and every episode URL still classify exactly as they do today. This is the
+  test that protects the §4.3 behaviour change from widening.
+* **Programme request → reservation (§2.4)** — a programme message creates a
+  reservation and resolves immediately, so the currently-available episodes are
+  published straight away; a repeat of the same programme URL does not create a
+  second reservation.
+* **Observation, when enabled (§2.4a)** — observing the service's own publish
+  is idempotent; no inbound message ever causes an outbound publish. And with
+  the observe subscription absent, everything else still works.
 * **YouTube non-regression (§3.4)** — the Lambda still routes
   `youtube.com`/`youtu.be` to `type: 'youtube'`, and the new reservation
   subscription does not change what the video queue receives.
@@ -1032,7 +1124,7 @@ the pure-resolver split in §4.7 is what makes it possible.
 | **0** | Resolver library + fixtures + `preview` CLI. Radiko only, including part grouping (§5.2). | Proof that TOKIO HOT 100 resolves to one episode of four parts, on real data, before anything can record. |
 | **1** | `reservation` container + SQLite + ledger, publishing via `/publish`. Radiko only. Plus the §4.6 late-binding check in the radio worker. | **Replaces the crontab.** Fixes problems 1–6. |
 | **2** | `reservation-web`: reservations, programme browser, live preview with part grouping, history. | The UI. Makes the feature usable by a person rather than by `crontab -e`. |
-| **3** | The two queues of §4.3 + the SNS subscription; worker `SendMessage` grant and status emit; observation, cross-boundary dedup, health chips. | §2.4 — history covers every download, and distributed workers become observable. |
+| **3** | Programme-URL classification in the Lambda; the `reservation` queue + subscription; worker `SendMessage` grant and status emit; health chips. Optionally the `reservation-observe` subscription. | Publishing a series URL starts following it. Distributed workers become observable. |
 | **4** | らじる and TVer resolvers (season-aware). | Fixes problems 7, 8 and 9 — the manual poll of §1.2 stops being a person's job. |
 
 Phase 1 pays for the project. Phase 2 makes it pleasant. Phase 4 is what could
@@ -1054,7 +1146,8 @@ not be attempted at all before this research.
 | Programme API changes shape → silent stop | Medium | Heartbeat (§7); contract canaries (§8); resolvers isolated so one breakage does not stop the others. |
 | Radiko corrects the table between publish and download | Medium | §4.6 — exactly what it is for. |
 | A TVer season is retired or renumbered mid-run | Medium | Reservation is (series, season); heartbeat fires when the season stops yielding episodes. |
-| Observation causes a publish loop | Low but severe | Structural rule in §2.4: observation writes history only. Enforced by having no code path from the SQS consumer to the publisher. |
+| Observation causes a publish loop | Low but severe | Only possible with the §2.4a bonus enabled. Structural rule: observation writes history only, enforced by having no code path from the SQS consumer to the publisher. |
+| A programme URL creates an unwanted standing reservation | Medium | Visible in the UI and one-click removable (§4.3); open question 2 asks whether it should land pending instead. |
 | A compromised worker triggers downloads | Low but severe | Workers get `sqs:SendMessage` on the status queue only — never `sns:Publish` (§4.3). A worker cannot make the system fetch anything. |
 | A status message is lost or arrives out of order | Medium | Non-fatal by design: the row stays `published` and the expiry warning fires (§7). Status advances monotonically by `(key, attempt)`, so a late `failed` cannot overwrite a `succeeded` (§4.3). |
 | A worker wins a job it cannot serve regionally | Low today | Type-based routing already separates regions (§4.2). Split `youtube` onto its own queue if a video worker is ever deployed outside Japan. |
@@ -1076,11 +1169,12 @@ not be attempted at all before this research.
    resolve step in the poller immediately before publish — simpler to test, but
    it re-opens the publish→download gap that §2.3 exists to close. Leaning
    worker-side.
-2. **Reserve-from-the-browser: is a `reserve: true` passthrough acceptable?**
-   §4.3 argues a URL alone cannot express *download now* vs *follow forever*,
-   and that `nhk.jp/p/rs/<series>/` already means the former. A boolean of the
-   same shape as `force` would resolve it without teaching the Lambda anything
-   — but it is still a new field on the publish contract.
+2. **Does a published programme URL want a confirmation step?** §4.3 has it
+   create a reservation outright, which is the useful default and matches what
+   a series URL denotes. But it does mean an idle click leaves a standing
+   reservation. The UI makes it visible and one-click removable; whether that
+   is enough, or whether a first-time programme URL should land as a *pending*
+   reservation awaiting confirmation, is worth deciding before Phase 3.
 3. **Should a manual download satisfy a reservation, or only suppress it?**
    §5.4 makes them share a ledger key, so a hand-published episode suppresses
    the reserved fetch. That is almost certainly right, but it means a manual
