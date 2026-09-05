@@ -1,6 +1,6 @@
 # Scheduling & Reservation — Design
 
-Status: **proposal**, not yet implemented. Revision 11.
+Status: **proposal**, not yet implemented. Revision 12.
 Researched and written 2026-09-04. All API observations were verified live on
 that date.
 
@@ -10,7 +10,12 @@ decides when to fetch it. "Schedule" from here on means only the old crontab.
 The service is the **reservation service** (one container, `reservation`),
 never "the scheduler"; its polling loop is **the poller**.
 
-Revision 11 sets the publish grace to **2 hours** by default, and scopes it to
+Revision 12 settles the wake-up policy (§4.8): the SQS consumers long-poll and
+are always awake, so only the resolver *sweep* needs an interval — **1 hour,
+with jitter**. Verified that Radiko honours `If-None-Match`/`If-Modified-Since`
+with a 0-byte 304, so frequency is not bandwidth-bound.
+
+Revision 11 set the publish grace to **2 hours** by default, and scopes it to
 Radiko only — らじる and TVer are gated on a flag that is read rather than
 computed, so a grace would delay them for nothing (§5.6).
 
@@ -883,6 +888,114 @@ whole thing testable offline against recorded fixtures (§8).
 
 ---
 
+### 4.8 The tick: two clocks, and why nothing urgent depends on either
+
+*(From the review: "how do you design the reservation queues' wake-up policy? I
+think every 30 min or 1 hour is reasonable.")*
+
+Reasonable, and 1 hour is the recommendation. But the question needs splitting
+first, because the programme worker has **two clocks** and only one of them is
+an interval at all.
+
+#### Clock 1 — the SQS consumers do not wake up; they are always awake
+
+The programme queues and the status queue are **long-polled**, not sampled:
+`receive_message(WaitTimeSeconds=20)` in a loop, exactly as `run_main` does
+today. A programme request or a status message is picked up within seconds of
+arriving. There is no interval to choose and no policy to design.
+
+Cost is a non-issue: 20-second waits are ~4,300 receive calls per queue per
+day, which is the same order as the two workers already running, and long
+polling exists precisely so that idle waiting is not billed as spinning.
+
+This is what keeps the **interactive** paths prompt regardless of the tick:
+
+* Publishing a series URL from the browser reaches the worker in seconds.
+* A reservation resolves **immediately on creation** (§4.3), rather than
+  waiting for a sweep.
+* The UI has a *"check now"* action for a single reservation.
+
+So the tick is only the *background sweep*, and background sweeps do not need
+to be fast.
+
+#### Clock 2 — the resolver tick: **1 hour**, with jitter
+
+This is the one that needs a number: fetch catalogues, evaluate reservations,
+publish whatever is ready.
+
+**Nothing in the system is urgent.** The tightest deadline anywhere is the
+7-day timefree window, and Radiko episodes are not even *eligible* until 2 h
+after broadcast (§5.6). An hourly tick spends 0.6% of the tightest budget. A
+daily tick would still be correct; hourly simply leaves a wide margin for a
+host that was asleep.
+
+**Radiko's own guidance is the other anchor.** The weekly XML carries
+`<ttl>1800</ttl>` in the body, so 30 minutes is the floor it asks for and an
+hour sits comfortably above it. 24 ticks a day is also pleasantly legible in a
+log.
+
+Between the review's two options: **60 minutes**. All that 30 buys is fetching
+a TVer episode up to half an hour sooner against a 7-day window, which is not
+worth doubling the request volume.
+
+**Add ±5 minutes of jitter.** A fixed hourly tick lands every deployment on
+:00; jitter spreads retries and keeps a restart from re-synchronising
+everything.
+
+#### Frequency is not bandwidth-bound, because conditional GETs work
+
+Worth checking rather than assuming, since the Radiko catalogue is 758 KB per
+station. Verified 2026-09-04:
+
+```http
+Cache-Control: public; s-maxage=86400, max-age=60
+last-modified: Sat, 05 Sep 2026 18:55:08 GMT
+etag: W/"6b43e885cbdc58681ee58f00c7e2c433"
+```
+
+and both revalidation forms are honoured:
+
+```
+If-None-Match:     … → 304, 0 bytes
+If-Modified-Since: … → 304, 0 bytes
+```
+
+So an unchanged catalogue costs a round trip and nothing else. **Store the
+`ETag` and `Last-Modified` per URL and send them on every fetch** — that one
+habit makes the tick interval a politeness and legibility decision rather than
+a bandwidth one, and it is the difference between ~90 MB/day and a few hundred
+kilobytes for a five-station setup.
+
+Two related economies, both from the same instinct:
+
+* **Fetch per station, not per reservation.** The weekly XML is per station, so
+  a tick fetches one catalogue per *distinct* station across all reservations.
+  Same for the NHK day listings, which are per (service, date).
+* **Skip the tick entirely when there is nothing enabled to resolve.** Obvious,
+  but it means an idle install makes no outbound requests at all.
+
+#### Bounded work per tick
+
+`max_per_tick` (§10) caps publishes so a first run cannot exhaust the API
+Gateway day quota — which matters more now that §5.5 makes that one call *per
+episode*. At an hourly tick and a cap of 10, a 140-episode backfill drains in
+about 14 hours, entirely in the background, well inside every window. The cap
+is a throttle, not a limit: nothing is dropped, only deferred to the next tick.
+
+#### A refinement worth naming, not building
+
+For Radiko the worker knows *exactly* when each pending episode becomes
+eligible — `max(part.to) + grace` — so it could sleep until the earliest such
+moment instead of ticking. Tempting, but it only half works: らじる and TVer
+readiness flags flip at times nobody publishes in advance, so a periodic poll
+is still required for them, and the deadline wake would be an optimisation
+layered on top of a loop that has to exist anyway.
+
+Not worth it while the tick costs a handful of 304s. Worth remembering if the
+catalogue set ever grows enough that the sweep stops being free.
+
+---
+
 ## 5. Data model
 
 *(From the review: "a programme could have multiple episodes, and an episode
@@ -1556,9 +1669,11 @@ not be attempted at all before this research.
    §5.4 makes them share a ledger key, so a hand-published episode suppresses
    the reserved fetch. That is almost certainly right, but it means a manual
    download at lower quality silently becomes *the* recording.
-4. **Tick interval** — 15 min sits comfortably inside every window and costs
-   ~100 API calls/day. Per-source, given TVer changes faster than a Radiko
-   weekly table?
+4. **Should the tick be per-source?** §4.8 settles on one hourly sweep for
+   everything. A case could be made for polling TVer more often than a Radiko
+   weekly table — but with conditional GETs making an unchanged catalogue
+   nearly free, the saving is small and the extra moving part is not obviously
+   worth it.
 5. **What should `description` carry for らじる and TVer** — series name or
    episode name? Radiko's is settled by §5.2; the other two are not.
 
