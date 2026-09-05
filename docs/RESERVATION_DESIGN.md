@@ -1,6 +1,6 @@
 # Scheduling & Reservation — Design
 
-Status: **proposal**, not yet implemented. Revision 5.
+Status: **proposal**, not yet implemented. Revision 6.
 Researched and written 2026-09-04. All API observations were verified live on
 that date.
 
@@ -10,7 +10,15 @@ decides when to fetch it. "Schedule" from here on means only the old crontab.
 The service is the **reservation service** (one container, `reservation`),
 never "the scheduler"; its polling loop is **the poller**.
 
-Revision 5 drops the Postgres container (§5.1): the workload is ~3 MB after a
+Revision 6 restructures the problem statement (§1). It previously framed
+everything as a defect of the crontab, which missed the larger problem: for
+らじる★らじる and TVer there is no crontab at all, and **a person is doing the
+polling by hand** — an errand that recurs forever, per series, and silently
+loses episodes when the window closes. §1.2 states it, and notes it shares a
+root cause with problem 4: both act at a moment when the needed information does
+not exist yet.
+
+Revision 5 dropped the Postgres container (§5.1): the workload is ~3 MB after a
 decade and 96 write bursts a day, so state is a **SQLite file** and the control
 plane collapses to **one container** — with the schema kept dialect-portable so
 Postgres stays a swap rather than a rewrite.
@@ -33,6 +41,13 @@ connection to the control-plane host (§4.3).
 
 ## 1. The problem
 
+There are two problems here, not one, and they are worth keeping apart because
+they have different shapes. Where cron is used, it does the wrong thing. Where
+cron cannot be used at all, **a person is doing the job by hand** — and that is
+the more tiring of the two.
+
+### 1.1 Where cron is used, it does the wrong thing
+
 Today a recurring recording is a `crontab` line:
 
 ```text
@@ -47,20 +62,50 @@ schedule*, not a *programme*, and everything wrong with it follows from that:
 | # | Problem | Consequence |
 | - | ------- | ----------- |
 | 1 | The hour is hard-coded | The broadcaster moves the show; cron silently records the wrong hour, or a 拡大版 gets truncated. Nothing reports it. |
-| 2 | Multi-hour shows are hand-enumerated | `${d}130000 ${d}140000 …`. Add an hour to the show and you must edit the crontab. |
+| 2 | Multi-part shows are hand-enumerated | `${d}130000 ${d}140000 …`. A fifth part next week means editing the crontab. |
 | 3 | A missed firing is lost | Host asleep at 01:10 Sunday → no recording, even though Radiko timefree keeps the programme for another 7 days. |
 | 4 | **The schedule is decided before broadcast** | The crontab commits to 13:00–17:00 the moment it is written. Radiko corrects its table *after* the fact — a show that ran long, a 特番 that preempted it — and the frozen timestamps are then simply wrong. |
-| 5 | No coverage for らじる★らじる | 聞き逃し has no timestamp addressing, so there is nothing for cron to construct. |
-| 6 | No coverage for TVer | Episode URLs are unpredictable; they do not exist until the episode is posted. |
-| 7 | Schedules live in one host's `crontab -e` | Unversioned, invisible, unreviewable, lost with the machine, and editable only over SSH. |
-| 8 | `date -d` is a GNU-ism | Breaks on macOS/BSD hosts. |
+| 5 | Schedules live in one host's `crontab -e` | Unversioned, invisible, unreviewable, lost with the machine, and editable only over SSH. |
+| 6 | `date -d` is a GNU-ism | Breaks on macOS/BSD hosts. |
 
 Problem 4 is the one that matters most and the hardest to notice, because it
-fails by producing a plausible file rather than an error.
+fails by producing a **plausible file** rather than an error.
 
-The fix is to move from *scheduling* to *reserving* — 予約録画: the user declares
-**what** they want recorded, and the system decides **when** to fetch it and
-**which URL** that turns out to be — as late as it possibly can.
+### 1.2 Where cron cannot be used, a person is the scheduler
+
+For らじる★らじる and TVer there is no crontab line to get wrong, because there
+is nothing for cron to construct: **the episode URL does not exist until the
+episode is published.** 聞き逃し has no timestamp addressing at all, and a TVer
+episode id is minted when the episode is posted.
+
+So the automation is a human. The actual current procedure for following a TVer
+series is: open `tver.jp/series/…`, look for an episode you have not seen, copy
+its URL, publish it — and remember to do that again next week.
+
+| # | Problem | Consequence |
+| - | ------- | ----------- |
+| 7 | **You are the poller** | Visiting a series page to check for a new episode is a scheduled task being executed by a person. It recurs forever, per series, and no part of it needs judgement. |
+| 8 | **The manual poll has a deadline** | TVer keeps an episode about 7 days; らじる 聞き逃し is per-episode but often about a week. Forget for eight days and the episode is simply gone — permanently, and with nothing to tell you it happened. |
+| 9 | It scales with the number of series | Each series added is another recurring errand. The cost of following one more show is paid weekly, by hand, which is what keeps the list of followed shows artificially short. |
+
+> **Problems 7–9 have the same root cause as problem 4.** In both cases you are
+> forced to act at a moment when the information you need does not exist yet:
+> cron commits to a start time *before* broadcast, and a person visits a series
+> page *before* the episode is published. Both are guessing, and both are
+> guessing because they are looking too early.
+>
+> That is why one mechanism answers both — **look afterwards, on a window**
+> (§2.2). The manual poll is not a workaround to be tolerated; it is a
+> specification of the loop to be automated.
+
+### 1.3 What the fix is
+
+Move from *scheduling* to *reserving* — 予約録画. The user declares **what**
+they want recorded, and the system decides **when** to fetch it and **which
+URL** that turns out to be, as late as it possibly can.
+
+For §1.1 that means the crontab stops guessing. For §1.2 it means the errand
+stops being yours.
 
 ---
 
@@ -89,6 +134,12 @@ publishes those. Problem 3 disappears: a missed tick, a reboot, a week's
 downtime are all recovered on the next scan. Catch-up is what the normal loop
 does. It also gives **free bounded retry** — a failed fetch is simply not
 marked done, and the window is the natural deadline.
+
+This loop is also, literally, the manual procedure of §1.2 written down: *visit
+the page, look for something new, fetch it, remember you did*. The difference is
+that a machine can run it every fifteen minutes without getting bored, and the
+window means it does not have to be punctual to be correct — which is exactly
+where the human version fails (problem 8).
 
 ### 2.3 Bind the episode URL as late as possible
 
@@ -979,10 +1030,10 @@ the pure-resolver split in §4.7 is what makes it possible.
 | Phase | Scope | Delivers |
 | ----- | ----- | -------- |
 | **0** | Resolver library + fixtures + `preview` CLI. Radiko only, including part grouping (§5.2). | Proof that TOKIO HOT 100 resolves to one episode of four parts, on real data, before anything can record. |
-| **1** | `reservation` container + SQLite + ledger, publishing via `/publish`. Radiko only. Plus the §4.6 late-binding check in the radio worker. | **Replaces the crontab.** Fixes problems 1, 2, 3, 4, 7 and 8. |
+| **1** | `reservation` container + SQLite + ledger, publishing via `/publish`. Radiko only. Plus the §4.6 late-binding check in the radio worker. | **Replaces the crontab.** Fixes problems 1–6. |
 | **2** | `reservation-web`: reservations, programme browser, live preview with part grouping, history. | The UI. Makes the feature usable by a person rather than by `crontab -e`. |
 | **3** | The two queues of §4.3 + the SNS subscription; worker `SendMessage` grant and status emit; observation, cross-boundary dedup, health chips. | §2.4 — history covers every download, and distributed workers become observable. |
-| **4** | らじる and TVer resolvers (season-aware). | Fixes problems 5 and 6. |
+| **4** | らじる and TVer resolvers (season-aware). | Fixes problems 7, 8 and 9 — the manual poll of §1.2 stops being a person's job. |
 
 Phase 1 pays for the project. Phase 2 makes it pleasant. Phase 4 is what could
 not be attempted at all before this research.
