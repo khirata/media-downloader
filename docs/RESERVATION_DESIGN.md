@@ -558,23 +558,48 @@ subscription, and nothing else changes.
 
 ```mermaid
 graph TD
-    EXT["Extension / curl / cron"]
-    R1["programme-radiko"]
-    R2["programme-radiru"]
-    R3["programme-tver"]
-    UI["reservations-ui<br/>UI + status + observe"]
-    DB[("reservations.sqlite")]
-    API["api-gw + Lambda<br/>classifies URLs"]
-    SNS["SNS dispatcher"]
-    QR["radio SQS"]
-    QV["video SQS"]
-    QP["programme-tver SQS"]
-    QN["programme-radiru SQS"]
-    QO["observe SQS (optional)"]
-    QS["status SQS"]
-    W1["radio worker · JP"]
-    W2["video worker"]
-    CAT["Programme tables"]
+    classDef client   fill:#f9d0c4,stroke:#333,stroke-width:2px,color:#000;
+    classDef router   fill:#d4e6f1,stroke:#333,stroke-width:2px,color:#000;
+    classDef queue    fill:#d5f5e3,stroke:#333,stroke-width:2px,color:#000;
+    classDef worker   fill:#fcf3cf,stroke:#333,stroke-width:2px,color:#000;
+    classDef prog     fill:#fadbd8,stroke:#333,stroke-width:2px,color:#000;
+    classDef storage  fill:#e8daef,stroke:#333,stroke-width:2px,color:#000;
+    classDef external fill:#eaeded,stroke:#666,stroke-width:2px,stroke-dasharray:5 3,color:#000;
+
+    subgraph Clients ["📤 Publishers"]
+        EXT["Chrome extension / curl / cron"]:::client
+    end
+
+    subgraph Dispatcher ["🚦 Central router (api-gw/) — unchanged"]
+        API["API Gateway + Lambda<br/>classifies URLs"]:::router
+        SNS["SNS dispatcher"]:::router
+    end
+
+    subgraph Queues ["📥 Message queues"]
+        QR["radio SQS"]:::queue
+        QV["video SQS"]:::queue
+        QP["programme-tver SQS"]:::queue
+        QN["programme-radiru SQS"]:::queue
+        QO["observe SQS<br/>(optional)"]:::queue
+        QS["status SQS"]:::queue
+    end
+
+    subgraph Prog ["🗓️ Programme workers (new) — one host"]
+        R1["programme-radiko"]:::prog
+        R2["programme-radiru"]:::prog
+        R3["programme-tver"]:::prog
+        UI["reservations-ui<br/>UI + REST API"]:::prog
+        DB[("reservations.sqlite")]:::storage
+    end
+
+    subgraph Down ["⚙️ Download workers — anywhere"]
+        W1["radio worker · JP"]:::worker
+        W2["video worker"]:::worker
+    end
+
+    subgraph Ext ["🌐 Not ours — the broadcasters' own metadata APIs"]
+        CAT["radiko.jp/v3 · weekly programme XML<br/>api.nhk.jp/r8 · らじる day listings<br/>platform-api.tver.jp · series and seasons"]:::external
+    end
 
     EXT -->|"episode or programme URL"| API
     API --> SNS
@@ -583,6 +608,7 @@ graph TD
     SNS -->|"tver_series"| QP
     SNS -->|"radiru_series"| QN
     SNS -.->|"radiko / tver / youtube"| QO
+
     QR --> W1
     QV --> W2
     QP -->|"long poll"| R3
@@ -590,11 +616,22 @@ graph TD
     QO -.->|"long poll"| UI
     W1 & W2 -->|"SendMessage"| QS
     QS -->|"long poll"| UI
-    CAT -.->|"read, region-free"| R1 & R2 & R3
+
+    R1 & R2 & R3 -.->|"GET, conditional"| CAT
     R1 & R2 & R3 ==>|"POST /publish (episode URLs)"| API
     R1 & R2 & R3 <--> DB
     UI <--> DB
 ```
+
+Reading it: the **dashed grey box** is the only thing in the picture that is not
+ours — the broadcasters' own programme metadata, read over plain HTTP and never
+written to. Everything a programme worker knows about what is on the air comes
+from there (§3), and because those reads answer from anywhere (§3.1) the
+programme workers can sit on one host while the download workers do not.
+
+The **heavy arrow** is the point of the whole design: a programme worker's
+output is a `/publish` call carrying episode URLs — the same request a human
+makes, so nothing downstream can tell the difference.
 
 Note what a programme worker publishes: **episode URLs**. It converts a
 programme request into episode requests, which is the whole job. §4.1a splits
