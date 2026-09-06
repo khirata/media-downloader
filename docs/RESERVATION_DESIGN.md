@@ -1,16 +1,26 @@
 # Scheduling & Reservation — Design
 
-Status: **proposal**, not yet implemented. Revision 13.
+Status: **proposal**, not yet implemented. Revision 15.
 Researched and written 2026-09-04. All API observations were verified live on
 that date.
 
 **Terminology.** The cron origin made this look like *scheduling*, but the thing
 being built is 予約録画 — a **reservation**. You reserve a programme; the system
 decides when to fetch it. "Schedule" from here on means only the old crontab.
-The service is the **reservation service** (one container, `reservation`),
-never "the scheduler"; its polling loop is **the poller**.
+Collectively the new components are the **programme workers** —
+`programme-radiko`, `programme-radiru`, `programme-tver` and `reservations-ui`
+(§4.1a) — never "the scheduler"; each worker's sweep is **the tick**.
 
-Revision 13 splits the programme worker **three ways** — one per source, plus a
+Revision 15 surveys the storage options rather than asserting one (§5.1):
+embedded vs server, the four-containers-one-host constraint that disqualifies
+DuckDB, the reservations-as-YAML hybrid that is genuinely half-right, where
+SQLite bites, and concrete triggers for changing the answer later.
+
+Revision 14 redrew the architecture diagram to say what is **not ours** — the
+box previously labelled "Programme tables" is the broadcasters' own metadata
+APIs — using the README's subgraph and `classDef` conventions.
+
+Revision 13 split the programme worker **three ways** — one per source, plus a
 UI/aggregator (§4.1a). Revision 8's "not yet" mis-scored blast radius as a
 future trigger when TVer's undocumented API makes it a present one. All four
 containers share one SQLite file on the one host; the ledger's source-namespaced
@@ -1122,14 +1132,18 @@ Programme (番組)      what you reserve.  1 row per reservation
 
 ### 5.1 Storage: SQLite in the same container, not a database server
 
-*(From the review: "How do you plan for Postgres? Can it be a lightweight
-version running in a container along with the reservation system?")*
+*(From the review: "Can Postgres be a lightweight version in a container?" and
+later, "I prefer a light database, but give me the options with pros and
+cons.")*
 
-It can — `postgres:17-alpine` with `shared_buffers=16MB` and
-`max_connections=20` idles around 30–50 MB and is a perfectly reasonable
-container. But having sized the workload, **I do not think this should be a
-database server at all.** Revision 4's Postgres was cargo-culted from "it has a
-UI, so it needs a DBMS", and the numbers do not support it.
+Postgres can be light — `postgres:17-alpine` with `shared_buffers=16MB` idles
+around 30–50 MB and is a perfectly reasonable container. But having sized the
+workload, **this should not be a database server at all.** Revision 4's
+Postgres was cargo-culted from "it has a UI, so it needs a DBMS", and the
+numbers do not support it.
+
+The survey below is the fuller answer: what the realistic options are, what
+each is actually good at, and what would make a different one right.
 
 **How much data is there, actually?** A ledger row is a key (~40 B), a title
 (~60 B), a part list (~60 B), a status and a few timestamps — call it 300 bytes.
@@ -1150,15 +1164,54 @@ SQLite in WAL mode serialises writers with a `busy_timeout`, and at this rate
 two writers colliding is a once-in-a-long-while event that resolves in
 milliseconds.
 
-**What would actually justify Postgres** — and none of it is true here:
+#### The options, and why this one
 
-| Reason | Applies? |
-| ------ | -------- |
-| Writers on more than one host | No — the control plane is one host by §4.5 |
-| Sustained concurrent writes | No — 96 bursts/day |
-| Data beyond a laptop's RAM | No — 3 MB per decade |
-| Queries needing a planner worth the name | No — lookups by key, lists by date |
-| Replication, PITR, roles | No |
+The first fork is **embedded vs server**, and it decides most of the rest.
+
+An *embedded* database is a library your process links against; the data is a
+file, and there is nothing to start, supervise, or authenticate to. A *server*
+is a separate daemon you connect to over a socket, which buys real concurrency
+and access control at the cost of being one more thing that has to be running,
+backed up and upgraded.
+
+The second fork is the constraint this system actually imposes: **four
+containers on one host, all reading and writing** (§4.1a). That is where
+several otherwise-reasonable options fall over, because plenty of embedded
+databases assume a single process.
+
+| Option | What it is | 4 containers, one host? | Query surface | Ops burden | Fit here |
+| ------ | ---------- | ----------------------- | ------------- | ---------- | -------- |
+| **SQLite** | Embedded SQL engine; the DB is one file | **Yes** — WAL mode, one writer at a time, readers never block | Full SQL, joins, transactions | None. A file on a volume | **Recommended** |
+| **Postgres** (container) | Full SQL server | Yes, comfortably | Full SQL, real planner | A daemon, a volume, credentials, major-version upgrades | Works, unwarranted |
+| **DuckDB** | Embedded SQL engine, column-store, built for analytics | **No** — one process holds the file read-write; others cannot write concurrently | Full SQL, excellent for aggregation | None | **Disqualified** by the concurrency model |
+| **Plain JSON / YAML files** | No database; read, mutate, rewrite | Only with your own file locking, which you would get subtly wrong | Whatever you hand-write | None, until it breaks | Fine for reservations, wrong for the ledger |
+| **LMDB / RocksDB** | Embedded key-value store | Yes (LMDB is multi-process safe) | Key lookups only — every list, filter and sort is code you write | None | Overkill and under-powered at once |
+| **Redis** | In-memory server with optional persistence | Yes | Key/hash operations; querying is manual | A daemon, and durability is a config decision | Wrong shape — this data must not be lossy |
+
+A few of these deserve more than a table cell.
+
+**DuckDB is the interesting near-miss.** It is embedded like SQLite and its SQL
+is better, so it looks like a straight upgrade — but it is built for one
+analytical process reading a lot, not several small processes writing a little.
+A single process takes the file read-write and the others are locked out. It is
+the right tool for a very different job, and it is worth knowing *why* it is
+wrong here rather than just that it is.
+
+**Plain files are more tempting than they look, and half-right.** Reservations
+are ~100 rows of user-edited configuration, they change rarely, and a YAML file
+in git would be genuinely nicer than a table — diffable, reviewable, restorable.
+The ledger is the opposite: thousands of rows, written by four processes,
+queried by date and status. So the honest hybrid is **reservations as a file,
+ledger in SQLite** — and it is a real option, not a compromise. I have not
+recommended it only because two storage mechanisms is a second thing to
+understand for a benefit the `GET /api/reservations` export (§5.3) mostly
+already delivers.
+
+**Postgres is not wrong, just unearned.** Everything that would justify it is
+absent: writers on more than one host (no — §4.5), sustained concurrent writes
+(no — 96 bursts a day), data beyond RAM (no — 3 MB per decade), queries needing
+a real planner (no — lookups by key and lists by date), replication, PITR or
+roles (no).
 
 **So: SQLite.** Revision 4's justification for a separate web container ("the
 UI must stay responsive while a tick pulls a 758 KB XML") does not hold up
@@ -1173,6 +1226,53 @@ which is a different and better reason:
 
 Each of them is in exactly the shape of the two workers that exist: a container
 with a `.env` and a volume, doing one job.
+
+#### Where SQLite actually bites
+
+Choosing it on a recommendation is easier if the sharp edges are named up
+front. None are disqualifying here, but all are real:
+
+* **It has no network access.** Every reader and writer must be a process on
+  that host with the file mounted. There is no `psql` from your laptop; the
+  way in is `reservations-ui` or `sqlite3` over SSH.
+* **It is unsafe on NFS and SMB.** POSIX locking over network filesystems is
+  unreliable, and the failure mode is corruption rather than an error. The
+  volume must be local — this is the one constraint that would genuinely bite
+  someone who moved the data to a NAS "for backups".
+* **One writer at a time.** Readers never block, but writers queue. At 96
+  bursts a day that is invisible; it is nonetheless a ceiling rather than
+  something that scales.
+* **Schema changes are more limited than you will expect.** Adding a column is
+  easy; older SQLite could not drop or rename one at all, and even current
+  versions are more restricted than Postgres. Non-trivial migrations mean
+  create-new-table, copy, swap — which is fine if you write migrations
+  deliberately and annoying if you improvise them.
+* **No users or grants.** Anything that can read the file reads everything.
+  Access control is filesystem permissions, full stop.
+
+**One add-on worth knowing about:** Litestream continuously replicates a SQLite
+file to object storage, which turns "back up the reservations" into a
+background process rather than a cron'd `VACUUM INTO`. Given there is already
+an AWS account here, it is a small, well-contained upgrade if the periodic
+snapshot ever feels too coarse.
+
+#### What would change the answer
+
+Concrete triggers, so this is a decision that can be revisited on evidence
+rather than on feeling:
+
+| If this becomes true | Move to |
+| -------------------- | ------- |
+| Programme workers move to **more than one host** | Postgres — or per-worker SQLite files, which the source-namespaced keys already permit (§4.1a) |
+| You want to query the store from outside the host | Postgres |
+| Ledger growth turns into millions of rows | Postgres, though the arithmetic above says a decade is 3 MB |
+| You start wanting real reporting over history | DuckDB *alongside* SQLite, reading the same data for analysis only |
+| Reservations want reviewing in git | The hybrid above — YAML for reservations, SQLite for the ledger |
+
+The portable-schema rule below is what keeps the first two cheap: natural keys,
+ISO-8601 text timestamps, JSON in a TEXT column, and `ON CONFLICT DO UPDATE`
+are all valid in both dialects, so switching is a connection change and a
+migration, not a rewrite.
 
 **Keep the schema portable anyway**, so Postgres stays a swap rather than a
 rewrite. It costs nothing if the SQL avoids both dialects' specialities:
