@@ -1228,6 +1228,32 @@ reservation service that has silently stopped polling is the same class of
 failure as a reservation that has silently stopped matching, and it deserves
 the same treatment.
 
+#### Who reads and writes what
+
+Worth stating, because "four containers share one file" does not say who owns
+which rows.
+
+| Table | Written by | Read by |
+| ----- | ---------- | ------- |
+| `reservations` | `reservations-ui` (create / edit / delete / enable), and a programme worker when a **programme request** arrives on its queue (§2.4) | every resolver, filtered to its own source |
+| `ledger` | the owning source's resolver, on publish (`published`, `parts`, `expires_at`); `reservations-ui`, applying status messages (`status`, `attempts`, `worker`) | `reservations-ui` for History; every resolver, to know what is already done |
+| `health` | each resolver writes its own `last_tick_at` and match counts | `reservations-ui` for the health chips (§7) |
+
+A tick, concretely:
+
+1. Read this source's enabled reservations.
+2. Fetch the catalogue — conditional GET, usually a 304 (§4.8).
+3. Resolve to `list[Episode]` (§4.7) and drop anything already in the ledger,
+   expired, or not yet ready (§5.6).
+4. For each survivor: `POST /publish`, then write its ledger row.
+5. Write `last_tick_at`.
+
+Two writers touch a ledger row — the resolver that created it and the UI
+applying a status message — but on **disjoint columns**, and the status update
+only ever advances state monotonically by `(key, attempt)` (§4.3). Combined with
+the source-namespaced keys, no two containers ever contend for the same row;
+they contend, rarely, only for SQLite's write lock.
+
 ### 5.2 How Radiko parts become an episode
 
 The grouping rule, and the answer to the TOKIO HOT 100 question:
