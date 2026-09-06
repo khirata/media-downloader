@@ -1,6 +1,6 @@
 # Scheduling & Reservation — Design
 
-Status: **proposal**, not yet implemented. Revision 15.
+Status: **proposal**, not yet implemented. Revision 16.
 Researched and written 2026-09-04. All API observations were verified live on
 that date.
 
@@ -10,6 +10,12 @@ decides when to fetch it. "Schedule" from here on means only the old crontab.
 Collectively the new components are the **programme workers** —
 `programme-radiko`, `programme-radiru`, `programme-tver` and `reservations-ui`
 (§4.1a) — never "the scheduler"; each worker's sweep is **the tick**.
+
+Revision 16 compares the storage options on **backup and migration** (§5.1),
+and corrects revision 5: losing the ledger is not harmless. The radio worker
+has no duplicate prevention at all, and the video worker's is defeated by the
+README's own file-moving recipe — so in a realistic deployment the ledger is
+the only duplicate prevention there is.
 
 Revision 15 surveys the storage options rather than asserting one (§5.1):
 embedded vs server, the four-containers-one-host constraint that disqualifies
@@ -1274,6 +1280,93 @@ ISO-8601 text timestamps, JSON in a TEXT column, and `ON CONFLICT DO UPDATE`
 are all valid in both dialects, so switching is a connection change and a
 migration, not a rewrite.
 
+#### Backup and migration
+
+The useful move here is to stop treating this as one dataset. It is two, with
+opposite requirements:
+
+| | Reservations | Ledger / history |
+| --- | --- | --- |
+| Size | ~100 rows, ~30 KB | thousands of rows, ~3 MB per decade |
+| Changes | rarely, by hand | constantly, by machine |
+| If lost | **irreplaceable** — you must remember every show you follow and re-enter it | re-downloads, and the record of what ran is gone |
+| Backup need | real discipline | routine snapshot |
+
+So the thing that most needs protecting is 30 KB of text that changes a few
+times a year. That is worth knowing before choosing an engine, because it means
+**the backup story barely depends on the engine at all** — it depends on
+exporting reservations somewhere durable and human-readable.
+
+> **A correction.** Revision 5 said losing the ledger "degrades to harmless
+> re-downloads, not corruption". That was too comfortable, and checking the
+> workers shows why:
+>
+> * **The radio worker has no duplicate prevention at all.** It downloads to a
+>   temporary `part{i}-{ft}-{station}` prefix and renames afterwards, so yt-dlp
+>   never sees the final filename and cannot skip anything. The README says as
+>   much. Losing the ledger re-downloads **every** Radiko and らじる episode
+>   still inside its window.
+> * **The video worker's dedup is defeated by the documented workflow.** It
+>   relies on the finished file still sitting in `DOWNLOAD_DIR` — but the
+>   README's own `.ready` + `inotify` recipe exists to *move files out* of that
+>   directory.
+>
+> So in a realistic deployment the ledger is the only duplicate prevention
+> there is. Not irreplaceable like reservations, but not free to lose either —
+> it earns a routine snapshot rather than a shrug.
+
+**Per engine**, since the differences here are sharper than the concurrency
+ones:
+
+| Option | Hot backup | Restore | File portability | Schema migration |
+| ------ | ---------- | ------- | ---------------- | ---------------- |
+| **SQLite** | `VACUUM INTO` — atomic, online, nothing stopped | Copy the file back. No server, no version matching | **Excellent** — stable format, endian-independent; an ARM Mac file opens on x86 Linux | `ADD COLUMN` easy; `DROP`/`RENAME COLUMN` need 3.35+/3.25+; type changes mean create-copy-swap. DDL is transactional, so a failed migration rolls back |
+| **Postgres** | `pg_dump` (logical) or `pg_basebackup` + WAL archiving for point-in-time recovery | Needs a running server of a compatible version | **Poor** — the data directory is version-locked; a major upgrade needs `pg_upgrade` or dump/restore | Best in class: rich `ALTER`, transactional DDL |
+| **YAML / JSON in git** | `git commit` | `git checkout` | Perfect — it is text | Rewrite with a script, and read the diff before committing |
+| **LMDB / RocksDB** | `mdb_copy`; RocksDB checkpoints | Copy back | **Poor** — LMDB files are not reliably portable across architectures or page sizes | No schema: you version the value encoding yourself, in application code |
+| **Redis** | `BGSAVE` → RDB, or AOF | Drop the file in, restart | Reasonable | No schema; same as above |
+| **DuckDB** | `EXPORT DATABASE` to Parquet/CSV | Import | Historically broke across versions | Full SQL, but moot — disqualified above |
+
+Two entries deserve emphasis, and they cut in opposite directions.
+
+**SQLite's restore story is the best of the server-class options**, and it is
+easy to undervalue. There is no version to match, no daemon to start, no roles
+to recreate: you put a file back. The corresponding trap is that **you must not
+`cp` a live database** — in WAL mode the recent writes are in a sidecar
+`-wal` file, and a naive copy can be torn. `VACUUM INTO` exists precisely for
+this and is the only form worth documenting.
+
+**Postgres's version-locked data directory is the recurring tax**, and it is
+the kind that surfaces at the worst time: the container image updates its major
+version, the server refuses to start against the old directory, and now you are
+running `pg_upgrade` on a Sunday to get last night's recording back. For a
+system meant to run unattended for years, that matters more than any of the
+concurrency arguments.
+
+**What to actually do here**
+
+1. **Export reservations as text, on every change.** `GET /api/reservations`
+   → YAML → a file, ideally in git. Thirty kilobytes, human-readable,
+   restorable by hand if every other thing is gone. Engine-independent, which
+   is the point — this practice survives changing your mind about the database.
+2. **Snapshot the file daily.** `sqlite3 … "VACUUM INTO '/backup/…'"`, keep a
+   few weeks. Now properly justified by the correction above, rather than a
+   nicety.
+3. **Restore once, on purpose.** Point a spare container at a copy and confirm
+   the UI comes up with the right reservations. A backup nobody has restored is
+   a hypothesis, and this one takes ten minutes to test.
+
+Litestream remains the upgrade if a daily snapshot ever feels too coarse:
+continuous replication to object storage, with point-in-time restore, and there
+is already an AWS account here.
+
+**Migrating engines later** is the case the portable-schema rule below is for,
+and it is genuinely cheap: natural keys, ISO-8601 text timestamps, JSON in TEXT
+and `ON CONFLICT DO UPDATE` are all valid in both dialects. `.dump` from SQLite,
+massage two or three type declarations, load into Postgres. The thing that
+would make it expensive — surrogate keys, engine-specific types, an ORM's
+opinions baked into the schema — is exactly what that rule avoids.
+
 **Keep the schema portable anyway**, so Postgres stays a swap rather than a
 rewrite. It costs nothing if the SQL avoids both dialects' specialities:
 
@@ -1293,8 +1386,8 @@ No ORM is needed to hold that line; a thin data-access module with plain SQL is
 enough, and it keeps the dependency list as short as the workers'.
 
 **Backup is now a one-liner**, which matters because reservations are the only
-irreplaceable data (the ledger regenerates itself from the sources, at the cost
-of some re-downloads):
+irreplaceable data — though the ledger is less cheap to lose than it looks
+(see *Backup and migration* above):
 
 ```
 sqlite3 reservations.sqlite "VACUUM INTO '/backup/reservations-$(date +%F).sqlite'"
@@ -1433,8 +1526,8 @@ The key is derivable from a *published URL* as well as from a resolver, which
 is what lets the optional observation (§2.4a) match a manual download to a
 reservation rather than just logging it. The workers' filename-based duplicate
 detection is the actual guarantee against a duplicate file, so losing the
-ledger — or skipping observation entirely — degrades to some wasted publishes,
-not to duplicate recordings.
+ledger — or skipping observation entirely — costs wasted publishes and, for
+the radio sources, real re-downloads (§5.1, *Backup and migration*).
 
 ### 5.5 Publishing a multi-part Radiko episode
 
@@ -1881,7 +1974,7 @@ not be attempted at all before this research.
 | The one host is down | Medium | Only costs recordings if downtime exceeds the shortest window (~7 days). Workers keep draining their queues. |
 | TVer `platform_uid` flow breaks | Medium | Undocumented API. Re-mint once, back off, disable that resolver only. |
 | UI reachable from the internet | Low but severe | Not internet-facing by default; token on the REST API; documented in the README. |
-| Database file lost or corrupted | Low | Degrades to re-downloads, not loss: the ledger regenerates from the sources. Reservations are the irreplaceable part — `VACUUM INTO` on a timer, plus the API export (§5.1). |
+| Database file lost or corrupted | Low | Reservations are irreplaceable — export them as text on every change. The ledger is the only duplicate prevention the radio worker has, so losing it re-downloads everything still in-window: `VACUUM INTO` daily (§5.1). |
 | SQLite on a NAS mount | Low but severe | POSIX locking is unreliable over NFS/SMB. Documented constraint (§5.1); the volume must be local. |
 | A resolver dies silently | Medium | `try/except` per pass, plus a per-source `last_tick_at` surfaced in the UI and alerted on (§5.1, §7). Since §4.1a each resolver is its own container, so a crash-loop is visible in `docker ps` and cannot take the others with it. |
 | Three workers drift into three codebases | Medium | The publisher, ledger DAL, matcher, health writer and episode model live in `shared/` (§4.1a). A resolver that grows its own publisher is the signal the split has started costing what it saved. |
